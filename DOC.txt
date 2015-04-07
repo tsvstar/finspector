@@ -1,0 +1,52 @@
+TODO:	dict of optional
+	skip dir mtime
+
+
+=== DB TYPES ===
+    SEGMENTED DB (config PREFIX-> NAME )
+    ASOF DB (snapshot for given date)
+    ?? ~.intermediary -- half scanned( not needed: fsystem scan is quick, than absent md5 is just empty)
+
+=== DB FORMAT ===
+   HEADER
+       tsv@f_inspector|{main|intermediary|segmented}|asof_decimal_tstamp|area\n\n
+
+   LINES (ignore empty):
+       --DIR--|name|hex_hmtime|b64_md5??|optional_val
+       type|name\t|hex_mtime|dec_size\t|b64_md5|optional_val
+
+ filename +.asofDECTIMESTAMP       -- snapshot of state for exact asof day
+ filename +.~intermediary          -- snapshot of state
+
+
+=== HOW TO USE ===
+finspector.py [--options..] command
+
+ options:
+   --asof "datestr"
+   --where "starts"   (accumulative option)
+   --config "file.cfg"
+   --db  "file.db"
+   --dirty	        (update only filesystem. so use name+size+mtime)
+   --update		(update fsystem and md5 first)
+   --create_asof
+   -o/--opt [OPTION=VALUE]
+
+ commands:
+   find      grep
+   findpreg  perl regexp
+   update    [where,..]
+   check     [where,..]          -- check integrity of files (by md5 hash)
+   dupes     [where,..]          -- find duplicates (try to collapse to whole dir)
+   changes   [where,..]          -- find what was changed (since last or given asof) (with or without update)
+   backup    config              -- do backup changes based on config
+   size      [where [size300M]]  -- report about space usage (anything>n%)
+
+=== CONFIG ===
+# Options to make md5 update faster
+QUICK_UPDATE = True
+QUICK_MOVE_DETECT = True              # If dir namesize hash match (one removed, another added) - think that this is moved {otherwise use md5 hash}
+QUICK_COPY_DETECT = True              # If dir namesize hash match (one existed, another added) - think that this is copy {otherwise use md5 hash}
+INDIVIDUAL_FILE_MOVE_THRES = 300M     # xxxK,xxxM,xxxG - if individual file with same name/mtime/size found(one added,another remoed) and greater than value - threat as moved
+
+CANCEL_INTERMEDIATE_AGE = 3           # if more than that day for intermediate DB - cancel its loading
