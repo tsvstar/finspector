@@ -1,6 +1,7 @@
 TODO:	dict of optional
 	skip dir mtime
 
+	more about symlink/junction point on WIN: http://stackoverflow.com/questions/1447575/symlinks-on-windows
 
 === DB TYPES ===
     SEGMENTED DB (config PREFIX-> NAME )
@@ -41,6 +42,9 @@ finspector.py [--options..] command
    changes   [where,..]          -- find what was changed (since last or given asof) (with or without update)
    backup    config              -- do backup changes based on config
    size      [where [size300M]]  -- report about space usage (anything>n%)
+   remember  --delete [where]	 -- remember list of files which are copies from somewhere
+   restore   filelist where	 -- restore files by list from their sources
+
 
 === CONFIG ===
 # Options to make md5 update faster
@@ -50,3 +54,5 @@ QUICK_COPY_DETECT = True              # If dir namesize hash match (one existed,
 INDIVIDUAL_FILE_MOVE_THRES = 300M     # xxxK,xxxM,xxxG - if individual file with same name/mtime/size found(one added,another remoed) and greater than value - threat as moved
 
 CANCEL_INTERMEDIATE_AGE = 3           # if more than that day for intermediate DB - cancel its loading
+EXCLUDE_DIR =
+EXCLUDE_FILE
