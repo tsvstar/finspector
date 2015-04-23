@@ -12,6 +12,7 @@
 #       SEGMENTED
 #   2s =\r\n
 
+""" TODO: Not sure that .load() needs to update database: intermediary is required for dir-scan only. and even more I actually not sure that it really required """
 
 """
         PYPY                                            PY2.7
@@ -322,9 +323,21 @@ class _DBFMT_ULTRAJSON(_DBFMTMain):
     require = 'utf-8'    #''=os.open, otherwise = codecs.open
 
     def load( self, f, database):
-        import ujson as json
+        try:
+            import ujson as json
+        except:
+            import json
         db1=json.load(f)
-        #TODO: update
+
+
+        # update input database
+        if not len(database):
+            for k,v in db1.iteritems():
+                database[k]=v
+        else:
+            for k,v in db1.iteritems():
+                database.setdefault(k,{}).update(v)
+
         return db1
 
     def save( self, fd, database ):
