@@ -64,3 +64,4 @@ EXCLUDE_DIR =
 EXCLUDE_FILE
 VOLUMES = C,D|F,G|E		# separation of logical disk by physical devices. this example - physical devices C+D, F+G, E. Only if several logical volumes on same phys device required to be listed
 				# purpose: make fast multithread
+IGNORE_DIR = [ '^.\\Windows\\winsxs' ]

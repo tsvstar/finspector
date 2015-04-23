@@ -6,14 +6,6 @@ import sys, os, time, codecs
 database = {}       #   [directory] ["dir"|"file"] [name]  = [0mtime, 1md5, 2size]
                     #   [directory] [name] = [0type, 1mtime, 2size, 3md5, 4hexstr_tstamp_snapshot?? ]       # type = File, Dir, Link
 
-#DB FORMAT
-#   HEADER
-#       tsv@f_inspector|{main|intermediary|segmented}|asof_decimal_tstamp|area\n\n
-#
-#   LINES (ignore empty):
-#       --DIR--|name|hex_hmtime|b64_md5??|optional_val
-#       type|name\t|hex_mtime|dec_size\t|b64_md5|optional_val
-
 # filename +.asofDECTIMESTAMP       -- snapshot of state for exact asof day
 # filename +.~intermediary          -- snapshot of state
 
@@ -163,6 +155,13 @@ class Saver(object):
 
 db_areas ={}
 
+def say( val ):
+    if not isinstance(val,unicode):
+        val = val.decode('utf-8')
+    if sys.stdout.isatty():
+        print val.encode('cp866','xmlcharrefreplace')
+    else:
+        sys.stdout.write( (val+u'\n').encode('utf-8','xmlcharrefreplace') )
 
 def main():
     import my.db as mydb, my.debug as debug
@@ -199,10 +198,10 @@ def main():
         for dname,v1 in database.iteritems():
             basename = os.path.basename(dname)
             if re_find.search(basename):
-                print dname
+                say( dname )
             for fname in v1.keys():
                 if re_find.search(fname):
-                    print os.path.join(dname,fname)
+                    say( os.path.join(dname,fname) )
     else:
         # default - benchmark
 
