@@ -1,6 +1,11 @@
 TODO:	dict of optional
 	skip dir mtime
 
+	Multithread: 1) scaning of directories; 2) calculate md5
+		how to make IPC between threads?
+	Rare intermediary save (60sec) -- whole unfinished branch (no next) up to top are canceled 
+		purpose: make faster directory content scan		     
+
 	more about symlink/junction point on WIN: http://stackoverflow.com/questions/1447575/symlinks-on-windows
 
 === DB TYPES ===
@@ -44,6 +49,7 @@ finspector.py [--options..] command
    size      [where [size300M]]  -- report about space usage (anything>n%)
    remember  --delete [where]	 -- remember list of files which are copies from somewhere
    restore   filelist where	 -- restore files by list from their sources
+   rs				 -- make read-solomon keys
 
 
 === CONFIG ===
@@ -56,3 +62,5 @@ INDIVIDUAL_FILE_MOVE_THRES = 300M     # xxxK,xxxM,xxxG - if individual file with
 CANCEL_INTERMEDIATE_AGE = 3           # if more than that day for intermediate DB - cancel its loading
 EXCLUDE_DIR =
 EXCLUDE_FILE
+VOLUMES = C,D|F,G|E		# separation of logical disk by physical devices. this example - physical devices C+D, F+G, E. Only if several logical volumes on same phys device required to be listed
+				# purpose: make fast multithread

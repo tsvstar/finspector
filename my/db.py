@@ -12,7 +12,6 @@
 #       SEGMENTED
 #   2s =\r\n
 
-# TODO: simplify --> no need os.open/codecs cases --- just common open(). all needed conversion - made inside of module
 
 """
         PYPY                                            PY2.7
@@ -31,11 +30,15 @@ import debug
 
 
 """
+============================================================
+            Base class for DB formats
     Wrapper: wrap all others formats processor (this class should be used to load/save DB)
             - auto detect format on load
             - write in requested format
             - process common auxilary data
-    TODO: maybe include/exclude - just two lines with values separated with |
+    TODO: * maybe include/exclude - just two lines with values separated with |
+          * scan
+============================================================
 """
 class FMTWrapper(object):
     # STATIC MEMBERS
@@ -97,7 +100,7 @@ class FMTWrapper(object):
             database = self.database
 
         try:
-            f = codecs.open(self.fname,'rb','utf-8')
+            f = open(self.fname,'rb')   # codecs.open(self.fname,'rb','utf-8')
 
             # Load header
             lineno = 1
@@ -111,58 +114,51 @@ class FMTWrapper(object):
                 raise Exception("Unsupported DB Ver: %s.%s"%(self.fmt,self.ver))
             lineno+=1
 
-
             offset = len(res)
 
-            # binary safe load leading lines until empty line
-            def emptydec(*kw,**kww):
-                    #print [ kw, kww ]
-                    return kw[0],len(kw[1])
-            #f.encoding=None
-            store = f.reader.decode
-            f.reader.decode = emptydec
+            # Binary safe preload buffer to find empty line
             lines = ''
             while lines.find('\n\n')<0:
                 l=f.read(256)
                 if not l:
                     break
                 lines+=l
+            getline_vars = [0]
+            def getline():
+                stop = lines.find('\n',getline_vars[0])+1
+                s = lines[getline_vars[0]:stop]
+                getline_vars[0] = stop
+                return s
 
-            # Load areas of responsibility
+            # Binary safe Load areas of responsibility
             self.areas, self.areas_exclude = {}, {}
             idx = 0
             while True:
               try:
-                stop = lines.find('\n',idx)+1
-                s = lines[idx:stop]
-                idx = stop
-
-                #s = f.readline()
+                s = getline()
                 offset += len(s)
                 if not s.strip():
                     break
-                if s[0]=='+':
-                    self.areas[s[1:]]=1
+                elif s[0]=='+':
+                    self.areas[s[1:].decode('utf-8')]=1
                 elif s[0]=='-':
-                    self.areas_exclude[s[1:]]=1
+                    self.areas_exclude[s[1:].decode('utf-8')]=1
                 else:
                     raise Exception( "Unknown area type at line %d: %s" % (lineno,s) )
               finally:
                 lineno+=1
 
-            f.reader.decode = store
             f.seek( offset )        # fix offset after readline()
+
+            if self.isDebug: dbg.tick('headers')
 
             # Find corresponend processor and call it
             obj = self.formats[self.fmt][self.ver]()
-            if self.isDebug: dbg.tick('headers')
             if self.isDebug: print "Do load %s from %s" %( type(obj), self.fname)
             obj.lineno = lineno
             obj.offset = offset
             obj.fname = self.fname
             if obj.require=='':
-                rv = obj.load( f.fileno(), database )
-            elif obj.require=='utf-8':
                 rv = obj.load( f, database )
             else:
                 with open(fname,'rb',obj.require) as f1:
@@ -192,11 +188,16 @@ class FMTWrapper(object):
             self.fmt = fmt
         if self.fmt not in self.save_formats:
             raise Exception("Fail to save: don't know how to write '%s' format"%self.fmt)
-        with codecs.open( self.fname, 'wb', 'utf-8' ) as f:
+
+        with open( self.fname, 'wb' ) as f:
             f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
             for k in self.areas.keys():
-                f.write("+%s\n"%k)
+                if isinstance(k,unicode):
+                    k = k.encode('utf-8')
+                f.write("+%s\n"% k)
             for k in self.areas_exclude.keys():
+                if isinstance(k,unicode):
+                    k = k.encode('utf-8')
                 f.write("-%s\n"%k)
             f.write('\n')
 
@@ -204,11 +205,9 @@ class FMTWrapper(object):
 
             obj = self.save_formats[self.fmt]()
             if self.isDebug: print "Do save %s to %s" % ( type(obj), self.fname )
-            if obj.require == 'utf-8':
-                return obj.save( f, database )
-            elif obj.require == '':
+            if obj.require == '':
                 f.flush()
-                return obj.save( f.fileno(), database )
+                return obj.save( f, database )
 
         with codecs.open( self.fname, 'ab', obj.require ) as f:
             return obj.save( f, database )
@@ -217,13 +216,14 @@ class FMTWrapper(object):
 # 0ftype, (1fname), 1mtime, 2fsize, 3md5, 4opt
 
 """
-    Base class for DB formats
+============================================================
+            Base class for DB formats
+============================================================
 """
 class _DBFMTMain(object):
     # description of class
     dbtype = '____'     # type of processor (%-4s)
     dbver  = '0001'     # hex value of version (%04x) - to adopt to changed internal values
-    require = 'utf-8'   #''=os.open, otherwise = codecs.open
 
     def __init__(self):
         pass
@@ -234,12 +234,21 @@ class _DBFMTMain(object):
 
 """
     Implementation: TEXT DATABASE
+
+#DB FORMAT
+#   HEADER
+#       tsv@f_inspector|{main|intermediary|segmented}|asof_decimal_tstamp|area\n\n
+#
+#   LINES (ignore empty):
+#       --DIR--|name|hex_hmtime|b64_md5??|optional_val
+#       type|name\t|hex_mtime|dec_size\t|b64_md5|optional_val
+
 """
 class _DBFMT_TXT(_DBFMTMain):
     # description of class
     dbtype = 'TEXT'
     dbver  = '0001'
-    require = 'utf-8'    #''=os.open, otherwise = codecs.open
+    require = ''                #''=os.open, otherwise = codecs.open
 
     # instance value
     #lineno = 3
@@ -249,7 +258,7 @@ class _DBFMT_TXT(_DBFMTMain):
             dirname = None
 
             ##measure = debug.Measure(self)
-            res = f.read().splitlines()                     # produce unicode
+            res = f.read().decode('utf-8').splitlines()                     # produce unicode
             #res = f.read().encode('utf-8').splitlines()    # works faster but produce non-unicode
             ##measure.tick('read+split')
             lineno = self.lineno
@@ -275,8 +284,6 @@ class _DBFMT_TXT(_DBFMTMain):
         return database
 
     def save( self, f, database ):
-        f.flush()
-        f = os.fdopen( f.fileno(), 'ab' )
         for dname in sorted(database.keys()):
             cur = database.get( dname, [] )
             _, mtime, _, md5, opt = cur['.']
@@ -305,6 +312,8 @@ class _DBFMT_TXT(_DBFMTMain):
                         fname=fname.encode('utf-8')
                     f.write("%s|%s\t|%x|%d|%s|%s\n"%(ftype,fname,mtime,fsize,md5,opt) )
         return database
+
+
 
 class _DBFMT_ULTRAJSON(_DBFMTMain):
     # description of class

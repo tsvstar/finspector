@@ -18,7 +18,7 @@ database = {}       #   [directory] ["dir"|"file"] [name]  = [0mtime, 1md5, 2siz
 # filename +.~intermediary          -- snapshot of state
 
 
-import scandir
+import my.scandir as scandir
 
 # PURPOSE: same as os.path.split(), but correctly process if directory names
 def split_dirpath( dirname ):
@@ -165,7 +165,7 @@ db_areas ={}
 
 
 def main():
-    import db as mydb, debug
+    import my.db as mydb, my.debug as debug
 
     try:
         import ujson
@@ -185,6 +185,7 @@ def main():
         intermediary_saver = Saver('./!!my.~int~.db', period=-60)
         print "Scan filesystem"
         database= scan_file( u"C:\\", {}, intermediary_saver, verbose = True)
+        print
         print "Save"
         db.save( database )
 
@@ -211,21 +212,6 @@ def main():
 
     """
     ##print calculate_md5("C:\\MY\\proj\\zoid20140109.zip")
-    print "Load db"
-    database1 = {}
-    try:
-        load_real_db("./!!my.~int~.db",database1)
-    except:
-        pass
-
-    intermediary_saver = Saver('./!!my.~int~.db', period=-15)
-    print "Scan filesystem"
-    scan_file( u"C:", database, intermediary_saver, verbose = True)
-    print
-
-    print "Save"
-    db_areas['./!!my.db'] = u"C:"
-    save_real_db("./!!my.db",database,'main')
     """
 
     pass
