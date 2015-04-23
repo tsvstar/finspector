@@ -12,8 +12,207 @@
 #       SEGMENTED
 #   2s =\r\n
 
+# TODO: simplify --> no need os.open/codecs cases --- just common open(). all needed conversion - made inside of module
+
+"""
+        PYPY                                            PY2.7
+load_real                                                                   load -- 1.336 sec
+TEXT    save -- 2.047 sec       load -- 1.113 sec       save -- 2.716 sec   load -- 1.643 sec   [was rebuilt and now takes only ~0.95sec to save() for PYPY]
+BIN1    save -- 1.656 sec       load -- 0.743 sec       save -- 3.755 sec   load -- 0.468 sec   [just demotest, will be much worse]
+BIN2    save -- 3.013 sec       load -- 1.322 sec       save -- 5.356 sec   load -- 0.941 sec
+JSON    save -- 7.347 sec       load -- 4.172 sec       save --11.550 sec   load -- 1.811 sec
+USN     save -- absent          load -- absent          save -- 0.503 sec   load -- 1.200 sec
+dict.copy 0.004
+"""
+
+
 import time, codecs, os
 import debug
+
+
+"""
+    Wrapper: wrap all others formats processor (this class should be used to load/save DB)
+            - auto detect format on load
+            - write in requested format
+            - process common auxilary data
+    TODO: maybe include/exclude - just two lines with values separated with |
+"""
+class FMTWrapper(object):
+    # STATIC MEMBERS
+    formats = {}        # formats[dbfmt][ver]   -- autodetect
+    save_formats = {}   # saveformats[dbfmt] = last_ver_of_db
+
+    DB_HEADER_TAG = chr(7)+"@FI"
+    DB_FMT_LINE = DB_HEADER_TAG+"FMT VER TIME12345678901234\r\n"
+
+    #
+    isDebug = False
+    default_fmt = 'TEXT'
+
+    # INSTANCE MEMBERS
+    fmt = None
+    ver = None
+    dbtime = time.time()
+    dbtype = '12345678901234'
+
+    fname = ""
+    database = None       # database[dirname][fname] = [ 0ftype, 1mtime, 2fsize, 3md5, 4opt ]
+
+    def __init__( self, fname = '', fmt=None):
+        if not self.formats:
+            self.formats, self.save_formats = self.initFormats()
+        self.fname = fname
+        self.fmt = fmt if fmt is not None else self.default_fmt
+        self.areas = {}              # db_areas[name]
+        self.areas_exclude = {}      # db_areas[name]
+        self.database = {}
+
+    @staticmethod
+    def initFormats():
+        for n,obj in globals().iteritems():
+            try:
+                #print issubclass(obj,_DBFMTMain), n, obj.dbtype
+                if issubclass(obj,_DBFMTMain):
+                    tgt = FMTWrapper.formats.setdefault(obj.dbtype, {} )
+                    if obj.dbver in tgt:
+                        print("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
+                        raise Exception("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
+                    tgt[obj.dbver] = obj
+            except Exception as e:
+                pass
+
+        if FMTWrapper.isDebug:
+            print FMTWrapper.formats
+        for n, v1 in FMTWrapper.formats.iteritems():
+            m = max(v1.keys())
+            FMTWrapper.save_formats[n] = FMTWrapper.formats[n][m]
+        return FMTWrapper.formats, FMTWrapper.save_formats
+
+    def load( self, database = None, fname = None ):
+        if self.isDebug: dbg = debug.Measure('load')
+        f = None
+        if fname is not None:
+            self.fname = fname
+        if database is None:
+            database = self.database
+
+        try:
+            f = codecs.open(self.fname,'rb','utf-8')
+
+            # Load header
+            lineno = 1
+            res = f.read(len(self.DB_FMT_LINE))
+            if res[:4]!=self.DB_HEADER_TAG:
+                raise Exception("Wrong TAG: This is not a FInspector DB")
+            self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14]
+            if self.fmt not in self.formats:
+                raise Exception("Unknown DB Format: %s"%self.fmt)
+            if self.ver not in self.formats[self.fmt]:
+                raise Exception("Unsupported DB Ver: %s.%s"%(self.fmt,self.ver))
+            lineno+=1
+
+
+            offset = len(res)
+
+            # binary safe load leading lines until empty line
+            def emptydec(*kw,**kww):
+                    #print [ kw, kww ]
+                    return kw[0],len(kw[1])
+            #f.encoding=None
+            store = f.reader.decode
+            f.reader.decode = emptydec
+            lines = ''
+            while lines.find('\n\n')<0:
+                l=f.read(256)
+                if not l:
+                    break
+                lines+=l
+
+            # Load areas of responsibility
+            self.areas, self.areas_exclude = {}, {}
+            idx = 0
+            while True:
+              try:
+                stop = lines.find('\n',idx)+1
+                s = lines[idx:stop]
+                idx = stop
+
+                #s = f.readline()
+                offset += len(s)
+                if not s.strip():
+                    break
+                if s[0]=='+':
+                    self.areas[s[1:]]=1
+                elif s[0]=='-':
+                    self.areas_exclude[s[1:]]=1
+                else:
+                    raise Exception( "Unknown area type at line %d: %s" % (lineno,s) )
+              finally:
+                lineno+=1
+
+            f.reader.decode = store
+            f.seek( offset )        # fix offset after readline()
+
+            # Find corresponend processor and call it
+            obj = self.formats[self.fmt][self.ver]()
+            if self.isDebug: dbg.tick('headers')
+            if self.isDebug: print "Do load %s from %s" %( type(obj), self.fname)
+            obj.lineno = lineno
+            obj.offset = offset
+            obj.fname = self.fname
+            if obj.require=='':
+                rv = obj.load( f.fileno(), database )
+            elif obj.require=='utf-8':
+                rv = obj.load( f, database )
+            else:
+                with open(fname,'rb',obj.require) as f1:
+                    f1.seek( f.tell() )
+                    rv = obj.load( f1, database)
+
+            # TODO!! Postprocess - clean out not matched to areas/areas_exclude
+            if self.isDebug:
+                ln=0
+                for v1 in rv.itervalues():
+                    ln+=len(v1)
+                print "Loaded %s records" % ln
+
+            return rv
+
+        finally:
+            if f:
+                f.close()
+
+
+    def save( self, database=None, fname=None, dbtype='MAIN', fmt = None ):
+        if fname is not None:
+            self.fname = fname
+        if database is None:
+            database = self.database
+        if fmt is not None:
+            self.fmt = fmt
+        if self.fmt not in self.save_formats:
+            raise Exception("Fail to save: don't know how to write '%s' format"%self.fmt)
+        with codecs.open( self.fname, 'wb', 'utf-8' ) as f:
+            f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
+            for k in self.areas.keys():
+                f.write("+%s\n"%k)
+            for k in self.areas_exclude.keys():
+                f.write("-%s\n"%k)
+            f.write('\n')
+
+            # TODO: Preprocess! Exclude not matched to areas/exclude_areas
+
+            obj = self.save_formats[self.fmt]()
+            if self.isDebug: print "Do save %s to %s" % ( type(obj), self.fname )
+            if obj.require == 'utf-8':
+                return obj.save( f, database )
+            elif obj.require == '':
+                f.flush()
+                return obj.save( f.fileno(), database )
+
+        with codecs.open( self.fname, 'ab', obj.require ) as f:
+            return obj.save( f, database )
+
 
 # 0ftype, (1fname), 1mtime, 2fsize, 3md5, 4opt
 
@@ -48,7 +247,12 @@ class _DBFMT_TXT(_DBFMTMain):
     def load( self, f, database ):
         try:
             dirname = None
-            res = f.read().splitlines()
+
+            ##measure = debug.Measure(self)
+            res = f.read().splitlines()                     # produce unicode
+            #res = f.read().encode('utf-8').splitlines()    # works faster but produce non-unicode
+            ##measure.tick('read+split')
+            lineno = self.lineno
             for line in res:
                 if not line:
                     continue
@@ -63,207 +267,104 @@ class _DBFMT_TXT(_DBFMTMain):
                 else:
                     ftype, fname, mtime, fsize, md5, opt = line
                     database[dirname][fname[:-1]] = [ ftype, int(mtime,16), int(fsize), md5, opt ]
-                self.lineno+=1
+                lineno+=1
+            ##measure.tick('done')
         except Exception as e:
-            print "Broken DB file:\nIn %s at line %d\nError: %s\n" % ( 'db_fname', self.lineno, str(e) )
+            print "Broken DB file:\nIn %s at line %d\nError: %s\n" % ( 'db_fname', lineno, str(e) )
             return None
         return database
 
     def save( self, f, database ):
+        f.flush()
+        f = os.fdopen( f.fileno(), 'ab' )
+        for dname in sorted(database.keys()):
+            cur = database.get( dname, [] )
+            _, mtime, _, md5, opt = cur['.']
+            if isinstance(dname,unicode):
+                dname=dname.encode('utf-8')
+            if isinstance(md5,unicode):
+                md5=md5.encode('utf-8')
+            if isinstance(opt,unicode):
+                opt=opt.encode('utf-8')
+            try:
+                f.write( "\n--DIR--|%s|%x|%s|%s\n" % (dname, mtime, md5, opt) )
+            except:
+                print [(dname, mtime, md5, opt)]
+            for fname in sorted(cur.keys()):
+                ftype, mtime, fsize, md5, opt = cur[fname]
+                if isinstance(ftype,unicode):
+                    ftype=ftype.encode('utf-8')
+                if fname!='.' and ftype!='D':
+                    if isinstance(fname,unicode):
+                        fname=fname.encode('utf-8')
+                    if isinstance(md5,unicode):
+                        md5=md5.encode('utf-8')
+                    if isinstance(opt,unicode):
+                        opt=opt.encode('utf-8')
+                    if isinstance(fname,unicode):
+                        fname=fname.encode('utf-8')
+                    f.write("%s|%s\t|%x|%d|%s|%s\n"%(ftype,fname,mtime,fsize,md5,opt) )
+        return database
+
+    def save2( self, f, database ):
         for dname in sorted(database.keys()):
             cur = database.get( dname, [] )
             v = cur['.']
-            f.write( u"\n--DIR--|%s|%x|%s|%s\n" % (dname.decode('utf-8'), v[1], v[3],v[4]) )
+            if not isinstance(dname,unicode):
+                dname=dname.decode('utf-8')
+            f.write( u"\n--DIR--|%s|%x|%s|%s\n" % (dname, v[1], v[3],v[4]) )
             for fname in sorted(cur.keys()):
                 v = cur[fname]
                 if fname!='.' and v[0]!='D':
+                    if not isinstance(fname,unicode):
+                        fname=fname.decode('utf-8')
+                    f.write(u"%s|%s\t|%x|%d|%s|%s\n"%(v[0],fname,v[1],v[2],v[3],v[4]) )
+        return database
+
+        """
+            #v = cur['.']
+            if isinstance(dname,unicode):
+                dname=dname.encode('utf-8')
+
+            x = "\n--DIR--|%s|%x|%s|%s\n" % (dname, v[1], v[3],v[4])
+            f.write( "\n--DIR--|%s|%x|%s|%s\n" % (dname, v[1], v[3],v[4]) )
+
                     try:
                         fname1=fname.decode('utf-8')
                     except:
                         print type(fname)
                         print fname.encode('cp866','ignore')
                         raise
-                    f.write(u"%s|%s\t|%x|%d|%s|%s\n"%(v[0],fname1,v[1],v[2],v[3],v[4]) )
+        """
+
+class _DBFMT_ULTRAJSON(_DBFMTMain):
+    # description of class
+    dbtype = 'UJSN'
+    dbver  = '0001'
+    require = 'utf-8'    #''=os.open, otherwise = codecs.open
+
+    def load( self, f, database):
+        import ujson as json
+        db1=json.load(f)
+        #TODO: update
+        return db1
+
+    def save( self, fd, database ):
+        import ujson as json
+        json.dump(database, fd)
         return database
 
+class SEGMENTED_CLASS(object):
+    segments = [ ]      # list of databases
 
-"""
-    Wrapper: wrap all others formats processor (this class should be used to load/save DB)
-            - auto detect format on load
-            - write in requested format
-            - process common auxilary data
-    TODO: maybe include/exclude - just two lines with values separated with |
-"""
-class FMTWrapper(object):
-    # STATIC MEMBERS
-    formats = {}        # formats[dbfmt][ver]   -- autodetect
-    save_formats = {}   # saveformats[dbfmt] = last_ver_of_db
-
-    DB_HEADER_TAG = chr(7)+"@FI"
-    DB_FMT_LINE = DB_HEADER_TAG+"FMT VER TIME12345678901234\r\n"
-
-    # INSTANCE MEMBERS
-    fmt = None
-    ver = None
-    dbtime = time.time()
-    dbtype = '12345678901234'
-
-    fname = ""
-    database = None       # database[dirname][fname] = [ 0ftype, 1mtime, 2fsize, 3md5, 4opt ]
-
-    def __init__( self, fname = '', fmt='TEXT'):
-        if not self.formats:
-            self.formats, self.save_formats = self.initFormats()
-        self.fname = fname
-        self.fmt = fmt
-        self.areas = {}              # db_areas[name]
-        self.areas_exclude = {}      # db_areas[name]
-        self.database = {}
-
-    @staticmethod
-    def initFormats():
-        for n,obj in globals().iteritems():
-            try:
-                #print issubclass(obj,_DBFMTMain), n, obj.dbtype
-                if issubclass(obj,_DBFMTMain):
-                    tgt = FMTWrapper.formats.setdefault(obj.dbtype, {} )
-                    if obj.dbver in tgt:
-                        print("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
-                        raise Exception("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
-                    tgt[obj.dbver] = obj
-            except Exception as e:
-                pass
-
-        print FMTWrapper.formats
-        for n, v1 in FMTWrapper.formats.iteritems():
-            m = max(v1.keys())
-            FMTWrapper.save_formats[n] = FMTWrapper.formats[n][m]
-        return FMTWrapper.formats, FMTWrapper.save_formats
-
-    def load( self, fname = None, database = None ):
-        f = None
-        if fname is not None:
-            self.fname = fname
-        if database is None:
-            database = self.database
-
-        try:
-            f = codecs.open(self.fname,'rb','utf-8')
-
-            # Load header
-            lineno = 1
-            res = f.read(len(self.DB_FMT_LINE))
-            print len(self.DB_FMT_LINE)
-            if res[:4]!=self.DB_HEADER_TAG:
-                raise Exception("Wrong TAG: This is not a FInspector DB")
-            self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14]
-            if self.fmt not in self.formats:
-                raise Exception("Unknown DB Format: %s"%self.fmt)
-            if self.ver not in self.formats[self.fmt]:
-                raise Exception("Unsupported DB Ver: %s.%s"%(self.fmt,self.ver))
-            lineno+=1
+    # def __iter__ - iter through all databases
+    # setter
+    # getter
 
 
-            offset = len(res)
-
-            def emptydec(*kw,**kww):
-                    #print kw
-                    #print kww
-                    return kw[0],len(kw[1])
-            #f.encoding=None
-            store = f.reader.decode
-            f.reader.decode = emptydec
-            lines = ''
-            while lines.find('\n\n')<0:
-                l=f.read(256)
-                print "!!"
-                if not l:
-                    break
-                lines+=l
-
-            # Load areas of responsibility
-            self.areas, self.areas_exclude = {}, {}
-            idx = 0
-            while True:
-              try:
-                stop = lines.find('\n',idx)+1
-                s = lines[idx:stop]
-                idx = stop
-
-                #s = f.readline()
-                print "!!",s
-                offset += len(s)
-                if not s.strip():
-                    break
-                if s[0]=='+':
-                    self.areas[s[1:]]=1
-                elif s[0]=='-':
-                    self.areas_exclude[s[1:]]=1
-                else:
-                    raise Exception( "Unknown area type at line %d: %s" % (lineno,s) )
-              finally:
-                lineno+=1
-
-            f.reader.decode = store
-            f.seek( offset )        # fix offset after readline()
-
-            # Find corresponend processor and call it
-            obj = self.formats[self.fmt][self.ver]()
-            print "Do load %s" %type(obj)
-            obj.lineno = lineno
-            obj.offset = offset
-            if obj.require=='':
-                rv = obj.load( f.fileno(), database )
-            elif obj.require=='utf-8':
-                rv = obj.load( f, database )
-            else:
-                with open(fname,'rb',obj.require) as f1:
-                    f1.seek( f.tell() )
-                    rv = obj.load( f1, database)
-
-            # TODO!! Postprocess - clean out not matched to areas/areas_exclude
-            ln=0
-            for v1 in rv.itervalues():
-                ln+=len(v1)
-            print "Loaded %s records" % ln
 
 
-            return rv
-
-        finally:
-            if f:
-                f.close()
-
-
-    def save( self, fname=None, database=None, dbtype='MAIN', fmt = None ):
-        if fname is not None:
-            self.fname = fname
-        if database is None:
-            database = self.database
-        if fmt is not None:
-            self.fmt = fmt
-        if self.fmt not in self.save_formats:
-            raise Exception("Fail to save: don't know how to write '%s' format"%self.fmt)
-        with codecs.open( self.fname, 'wb', 'utf-8' ) as f:
-            f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
-            for k in self.areas.keys():
-                f.write("+%s\n"%k)
-            for k in self.areas_exclude.keys():
-                f.write("-%s\n"%k)
-            f.write('\n')
-
-            # TODO: Preprocess! Exclude not matched to areas/exclude_areas
-
-            obj = self.save_formats[self.fmt]()
-            print "Do save %s" %type(obj)
-            if obj.require == 'utf-8':
-                return obj.save( f, database )
-            elif obj.require == '':
-                f.flush()
-                return obj.save( f.fileno(), database )
-
-        with codecs.open( self.fname, 'ab', obj.require ) as f:
-            return obj.save( f, database )
+""" =============== OUTDATED SECTION  ============= """
 
 
 """
@@ -329,7 +430,7 @@ class _DBFMT_Pack1(_DBFMTMain):
                 cur = database.get( dname, [] )
                 #dname = dname.encode('utf-8')
                 v = cur['.']
-                s = struct.pack( 'HHL8s99s', len(cur), len(dname), v[1], v[3], dname.encode('utf-8') )
+                s = struct.pack( 'HHL8s99s', len(cur), len(dname), v[1], v[3], dname)#.encode('utf-8') )
                 os.write( fd,  s )
                 for fname in sorted(cur.keys()):
                     v = cur[fname]
@@ -361,23 +462,55 @@ class _DBFMT_Pack2(_DBFMTMain):
     require = ''    #''=os.open, otherwise = codecs.open
 
     def load( self, fd, database):
+        """
         file_size = os.fstat(fd).st_size
         pos = 0 #os.fdopen(fd).tell()
         f = os.read(fd, file_size-pos)
+        """
+        #fd.reader.decode = codecs.utf_8_decode
+        f = open(self.fname,'rb')
+        #fd = os.open(self.fname, os.O_RDONLY)
+        #fd.seek(self.offset)
+        #f = fd.read()
+        """
+        file_size = os.fstat(fd).st_size
+        print file_size
+        pos = 0 #os.fdopen(fd).tell()
+        f = os.read(fd, file_size-pos)
+        print[f]
+        f1 = os.read(fd, file_size-pos)
+        print type(f)
+        print len(bytearray(f))
+        print len(f1)
+        """
 
         offsplus= struct.calcsize('cc22sLQH')   # type, _, mtime, size, md5, namesize
-        offset = 0
+        offset = self.offset+1
         try:
-            entries = struct.unpack_from('L',f,offset)[0]
-            offset = 8
-            startstr = offset + entries*offsplus
+            ##print [ f[:4] ]
+            print "%x"%offset
+            f.seek(offset)
+            r = f.read(4)
+            print [r]
+            entries = struct.unpack_from('L',r)[0]
+            #entries = struct.unpack_from('L',f,offset)[0]
             print entries
+            offset += 4
+            startstr = offset + entries*offsplus
 
             stroffs = 0
-            strdecode = f[startstr:].decode('utf-8')
+            #strdecode = f[startstr:]#.decode('utf-8')
+            print "%x"%startstr
+            f.seek(startstr)
+            print "%x"%f.tell()
+            strdecode = f.read()
 
-            while offset<stroffs:
-                ftyp, _, mtime, fsize, md5, lnname = struct.unpack_from( 'cc22sLQH', f, offset )
+            f.seek(offset)
+
+            while offset<startstr:
+                s = f.read(offsplus)
+                #ftyp, _, mtime, fsize, md5, lnname = struct.unpack_from( 'cc22sLQH', f, offset )
+                ftyp, _, mtime, fsize, md5, lnname = struct.unpack( 'cc22sLQH', s )
                 name = strdecode[stroffs:stroffs+lnname]
                 stroffs+=lnname
                 if ftyp=='!':
@@ -514,30 +647,6 @@ class _DBFMT_JSON(_DBFMTMain):
         return database
 
 
-
-class _DBFMT_ULTRAJSON(_DBFMTMain):
-    # description of class
-    dbtype = 'UJSN'
-    dbver  = '0001'
-    require = 'utf-8'    #''=os.open, otherwise = codecs.open
-
-    def load( self, f, database):
-        import ujson as json
-        db1=json.load(f)
-        #TODO: update
-        return db1
-
-    def save( self, fd, database ):
-        import ujson as json
-        json.dump(database, fd)
-        return database
-
-class SEGMENTED_CLASS(object):
-    segments = [ ]      # list of databases
-
-    # def __iter__ - iter through all databases
-    # setter
-    # getter
 
 """ =============== OUTDATED SECTION  ============= """
 

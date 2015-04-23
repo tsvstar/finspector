@@ -78,7 +78,7 @@ def scan_file( dirname, database, intermediary_saver = None, verbose = False ):
     for i in ignore_dirs_anyplace:
         if dirname.find(i)>=0:
             print "\nIgnore dir:%s" % dirname.encode('cp866','ignore')
-            return
+            return database
 
     d = []
     if dirname not in database:
@@ -104,6 +104,7 @@ def scan_file( dirname, database, intermediary_saver = None, verbose = False ):
 
     for l in d:
         scan_file(l, database, intermediary_saver,verbose=verbose)
+    return database
 
 
 # calculate size and hashes:
@@ -165,85 +166,50 @@ db_areas ={}
 
 def main():
     import db as mydb, debug
-    """
-    intermediary_saver = Saver('./!!my.~int~.db', period=-15)
-    print "Scan filesystem"
-    database={}
-    scan_file( u"C:", database, intermediary_saver, verbose = True)
-    print
-    mydb.db_areas = {}
-    mydb.save_real_db("./!!my.db",database,'main')
-    """
-    database = mydb.load_real_db("./!!my.db",{})
 
-    db = mydb.FMTWrapper('./my_text.db', 'TEXT')
-    #debug.Measure.measure_call_silent(db.fmt, db.save, database=database )
-    debug.Measure.measure_call(db.fmt,  db.load, database={} )
+    try:
+        import ujson
+        # If UltraJSON exists - that is fastest way to load/save DB
+        mydb.FMTWrapper.default_fmt = 'UJSON'
+    except:
+        # My own text saver is also fast (faster than any other common solution - pickle/cPickle/json)
+        mydb.FMTWrapper.default_fmt = 'TEXT'
 
-
-    db = mydb.FMTWrapper('./my_bin1.db', 'BIN1')
-    #debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-
-    db = mydb.FMTWrapper('./my_bin2.db', 'BIN2')
-    #debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-
-    """
-    db = mydb.FMTWrapper('./my_pick.db', 'PIK1')
-    debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-
-    db = mydb.FMTWrapper('./my_pick.db', 'PIC1')
-    debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-
-
-    db = mydb.FMTWrapper('./my_pick.db', 'PIKF')
-    debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-
-    db = mydb.FMTWrapper('./my_pick.db', 'PICF')
-    debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-    """
-    db = mydb.FMTWrapper('./my_pick.db', 'UJSN')
-    debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-    db = mydb.FMTWrapper('./my_pick.db', 'JSON')
-    debug.Measure.measure_call_silent(db.fmt,  db.save, database=database )
-    debug.Measure.measure_call(db.fmt, db.load, database={} )
-
-    """
-    global db_areas
-    #scan_file(u"C:\\Documents and Settings\\taranenko\\Downloads\\")
-
-    database1 = measure( load_real_db, "./!!my.db", {} )
-    measure_silent( save_real_db, "./!!my1.db", database1, None )
-    measure_silent( save_real_db_pack2, './!!my1.dbc1',database1,None )
-    db2 = measure_silent( load_real_db_pack, './!!my1.dbc',database1 )
-    measure_silent( save_real_db, "./!!my1_test.db", db2, None )
-    exit(1)
-
-    if len(sys.argv)==3 and sys.argv[1]=='find':
-        print "Load db"
-        #database1 = load_real_db( "./!!my.db", {} )
-        database1 = measure( load_real_db, "./!!my.db", {} )
-        measure_silent( save_real_db, "./!!my1.db", database1, None )
-        measure_silent( save_real_db_pack, './!!my1.dbc',database1,None )
+    if len(sys.argv)<2:
+        print "No command given: update, find"
         exit(1)
 
+    db = mydb.FMTWrapper('./!my_main.db')
+    if sys.argv[1]=='update':
+        # COMMAND: rescan
+        intermediary_saver = Saver('./!!my.~int~.db', period=-60)
+        print "Scan filesystem"
+        database= scan_file( u"C:\\", {}, intermediary_saver, verbose = True)
+        print "Save"
+        db.save( database )
+
+    elif sys.argv[1]=='find' and len(sys.argv)==3:
+        # COMMAND: simple lookup
+        print "Load"
+        database = db.load( {} )
+        print "Lookup"
         import re
         re_find = re.compile(sys.argv[2], flags=re.IGNORECASE)
-        for dname,v1 in database1.iteritems():
+        for dname,v1 in database.iteritems():
             basename = os.path.basename(dname)
             if re_find.search(basename):
                 print dname
             for fname in v1.keys():
                 if re_find.search(fname):
                     print os.path.join(dname,fname)
-        exit(1)
+    else:
+        # default - benchmark
 
+        database = debug.Measure.measure_call_silent('',  db.load )
+        debug.Measure.measure_call_silent('',  db.save, database=database )
+
+
+    """
     ##print calculate_md5("C:\\MY\\proj\\zoid20140109.zip")
     print "Load db"
     database1 = {}
@@ -267,44 +233,3 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-"""
-
-def test1():
-    v=['DD',10,11,'ttt','bbb']
-    fname = 'asdfasdfasdfasdf'
-    for i in range(0,239*1000):
-        vvv = u"%s|%s\t|%x|%d|%s|%s\n"%(v[0],fname,v[1],v[2],v[3],v[4])
-
-def testLoad1():
-    v=['DD',10,11,'ttt','bbb']
-    fname = 'asdfasdfasdfasdf'
-    vvv = u"%s|%s\t|%x|%d|%s|%s\n"%(v[0],fname,v[1],v[2],v[3],v[4])
-    for i in range(0,239*1000):
-        ftype, fname, mtime, fsize, md5, opt = vvv.split('|')
-        vvv1 = [ ftype, int(mtime,16), int(fsize), md5, opt ]
-
-
-def testPack():
-    v=['D',10,11,'ttt','bbb']
-    fname = 'asdfasdfasdfasdf'
-    import struct
-#                    ftype, fname, mtime, fsize, md5, opt = line
-    for i in range(0,239*1000):
-        vvv = struct.pack("sslQss",v[0],fname,v[1],v[2],v[3],v[4] )
-
-def testLoadPack():
-    v=['DD',10,11,'ttt','bbb']
-    fname = 'asdfasdfasdfasdf'
-    import struct
-    vvv = struct.pack("sslQss",v[0],fname,v[1],v[2],v[3],v[4] )
-    for i in range(0,239*1000):
-        vvv1 = struct.unpack("sslQss",vvv)
-
-def TEST():
-    measure( test1 )
-    measure( testLoad1 )
-    measure( testPack )
-    measure( testLoadPack )
-
-"""

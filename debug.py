@@ -35,14 +35,15 @@ class Measure():
         arg = ""
         if len(kw):  arg+= " %s"%repr(kw)
         if len(kww): arg+= " %s"%repr(kww)
-        Measure._measure_call( __prefix,call, arg, *kw, **kww )
+        return Measure._measure_call( __prefix,call, arg, *kw, **kww )
 
     @staticmethod
     def measure_call_silent( __prefix, call, *kw, **kww ):
-        Measure._measure_call( __prefix, call, '', *kw, **kww )
+        return Measure._measure_call( __prefix, call, '', *kw, **kww )
 
     def __enter__( self, *kw, **kww):
         self.t1 = time.time()
+        return self
     def __exit__( self, *kw, **kww):
         tick('end')
 
