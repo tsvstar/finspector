@@ -118,3 +118,19 @@ def TEST():
         exit(1)
 
 """
+
+    print "Load db"
+    database1 = {}
+    try:
+        load_real_db("./!!my.~int~.db",database1)
+    except:
+        pass
+
+    intermediary_saver = Saver('./!!my.~int~.db', period=-15)
+    print "Scan filesystem"
+    scan_file( u"C:", database, intermediary_saver, verbose = True)
+    print
+
+    print "Save"
+    db_areas['./!!my.db'] = u"C:"
+    save_real_db("./!!my.db",database,'main')
