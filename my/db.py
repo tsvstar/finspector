@@ -21,10 +21,9 @@ TEXT    save -- 2.047 sec       load -- 1.113 sec       save -- 2.716 sec   load
 BIN1    save -- 1.656 sec       load -- 0.743 sec       save -- 3.755 sec   load -- 0.468 sec   [just demotest, will be much worse]
 BIN2    save -- 3.013 sec       load -- 1.322 sec       save -- 5.356 sec   load -- 0.941 sec
 JSON    save -- 7.347 sec       load -- 4.172 sec       save --11.550 sec   load -- 1.811 sec
-USN     save -- absent          load -- absent          save -- 0.503 sec   load -- 1.200 sec
-dict.copy 0.004
+UJSON   ----------               -------------          save -- 0.503 sec   load -- 1.200 sec
+MSGPACK ----------               -------------          save -- 0.689 sec   load -- 0.807 sec
 """
-
 
 import time, codecs, os
 import debug
@@ -82,6 +81,9 @@ class FMTWrapper(object):
                         print("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
                         raise Exception("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
                     tgt[obj.dbver] = obj
+
+                    if hasattr(obj,'init'):
+                        obj.init()
             except Exception as e:
                 pass
 
@@ -91,6 +93,9 @@ class FMTWrapper(object):
             m = max(v1.keys())
             FMTWrapper.save_formats[n] = FMTWrapper.formats[n][m]
         return FMTWrapper.formats, FMTWrapper.save_formats
+
+    def getFormat( self, fmt ):
+            return self.save_formats.get(fmt,None)
 
     def load( self, database = None, fname = None ):
         if self.isDebug: dbg = debug.Measure('load')
@@ -149,6 +154,7 @@ class FMTWrapper(object):
               finally:
                 lineno+=1
 
+            offset += 1
             f.seek( offset )        # fix offset after readline()
 
             if self.isDebug: dbg.tick('headers')
@@ -159,6 +165,7 @@ class FMTWrapper(object):
             obj.lineno = lineno
             obj.offset = offset
             obj.fname = self.fname
+            obj.options.update( self.options )
             if obj.require=='':
                 rv = obj.load( f, database )
             else:
@@ -225,13 +232,26 @@ class _DBFMTMain(object):
     # description of class
     dbtype = '____'     # type of processor (%-4s)
     dbver  = '0001'     # hex value of version (%04x) - to adopt to changed internal values
+    options = {}
 
     def __init__(self):
-        pass
+        self.options = self.options.copy()
     def load( self, f, database ):
         raise Exception("Unoverrided %s.load() method", type(self) )
     def save( self, f, database ):
         raise Exception("Unoverrided %s.save() method", type(self) )
+
+    @staticmethod
+    def _update_db( database, db1 ):
+        # update input database
+        if not len(database):
+            for k,v in db1.iteritems():
+                database[k]=v
+        else:
+            for k,v in db1.iteritems():
+                database.setdefault(k,{}).update(v)
+        return database
+
 
 """
     Implementation: TEXT DATABASE
@@ -318,32 +338,65 @@ class _DBFMT_TXT(_DBFMTMain):
 
 class _DBFMT_ULTRAJSON(_DBFMTMain):
     # description of class
-    dbtype = 'UJSN'
+    dbtype = 'JSON'
     dbver  = '0001'
     require = 'utf-8'    #''=os.open, otherwise = codecs.open
 
-    def load( self, f, database):
+    @staticmethod
+    def init():
         try:
-            import ujson as json
+            import ujson
+            _DBFMT_ULTRAJSON.options['json.lib'] = 'ujson'   # fastest available library
+        except ImportError:
+            _DBFMT_ULTRAJSON.options['json.lib'] = 'json'    # fallback library
+
+    def _get_lib( self ):
+        try:
+            if self.options.get('json.lib','ujson').lower() == 'ujson':
+                import ujson as json
+            else:
+                import json
         except:
             import json
+        return json
+
+    def load( self, f, database):
+        json = self._get_lib()
         db1=json.load(f)
+        return self._update_db( database, db1 )
 
-
-        # update input database
-        if not len(database):
-            for k,v in db1.iteritems():
-                database[k]=v
-        else:
-            for k,v in db1.iteritems():
-                database.setdefault(k,{}).update(v)
-
-        return db1
-
-    def save( self, fd, database ):
-        import ujson as json
-        json.dump(database, fd)
+    def save( self, f, database ):
+        json = self._get_lib()
+        json.dump(database, f)
         return database
+
+
+
+class _DBFMT_MSGPACK(_DBFMTMain):
+    # description of class
+    dbtype = 'MSGp'
+    dbver  = '0001'
+    require = ''    #''=os.open, otherwise = codecs.open
+
+    @staticmethod
+    def init():
+        try:
+            from msgpack import _unpacker, _packer
+            _DBFMT_MSGPACK.options['msgpack.ext'] = True      # means "use c-extension"
+        except ImportError:
+            _DBFMT_MSGPACK.options['msgpack.ext'] = False     # means "use pure python"
+        print _DBFMT_MSGPACK.options['msgpack.ext']
+
+    def load( self, f, database ):
+        import msgpack
+        db1 = msgpack.unpack( f )
+        return self._update_db( database, db1 )
+
+    def save( self, f, database ):
+        import msgpack
+        msgpack.pack( database, f )
+        return database
+
 
 """============"""
 class SEGMENTED_CLASS(object):

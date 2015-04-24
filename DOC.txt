@@ -23,6 +23,17 @@ TODO:	dict of optional
 		* simpliest -> completely replace whole dir list (say '+dir' and complete its nonrecursive list, '~dir'=delete)
 		* more complex [not sure that better] - more operational [move dir there, move file, only that file, that files were delete,etc]
 
+	--> simple segment:
+		* completely text file in utf-8.
+		* firstline is "FILE_INSPECTOR_SEGMENTED_DB"
+		* other lines are JSON: { 'db_fname': 
+						{
+						  'include': ['dir1', 'dir2',...]
+						  'exclude': []
+						}
+					}
+
+
 === DB TYPES ===
     SEGMENTED DB (config PREFIX-> NAME )
     ASOF DB (snapshot for given date)

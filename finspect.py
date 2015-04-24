@@ -167,17 +167,26 @@ def main():
     import my.db as mydb, my.debug as debug
 
     try:
-        import ujson
-        # If UltraJSON exists - that is fastest way to load/save DB
-        mydb.FMTWrapper.default_fmt = 'UJSON'
+        db = FMTWrapper()
+        # a) Fastest way - is "msgpack" as a compiled-extension
+        if db.getFormat('MSGp') and db.getFormat('MSGp').options.get('msgpack.ext',False):
+            mydb.FMTWrapper.default_fmt = 'MSGp'
+        else:
+        # b) A little bit worse is UltraJSON compiled-extension
+            import ujson
+            # If UltraJSON exists - that is fastest way to load/save DB
+            mydb.FMTWrapper.default_fmt = 'JSON'
     except:
-        # My own text saver is also fast (faster than any other common solution - pickle/cPickle/json)
+        # c) If no fast complied modules exists (PyPy) - use own text saver
+        # It is faster other common solution - pickle/cPickle/json
         mydb.FMTWrapper.default_fmt = 'TEXT'
-    
 
     if len(sys.argv)<2:
         print "No command given: update, find"
         exit(1)
+
+    letter_list = [ 'C', 'G', 'H', 'K' ]
+    letter_list = [ 'C' ]
 
     #mydb.FMTWrapper.default_fmt = 'TEXT'
     db = mydb.FMTWrapper('./!my_main.db')
@@ -190,14 +199,14 @@ def main():
         print
         print "Save"
         db.save( database )
-	"""
+	    """
 
-	for letter in [ 'C', 'G', 'H', 'K' ]:
-           print "\nScan filesystem %s" %letter
-           database= scan_file( u"%s:\\"%letter, {}, intermediary_saver, verbose = True)
-           print "\nSave"
-           db2 = mydb.FMTWrapper('./!my_%s.db'%letter)
-           db2.save( database )
+        for letter in letter_list:
+            print "\nScan filesystem %s" %letter
+            database= scan_file( u"%s:\\"%letter, {}, intermediary_saver, verbose = True)
+            print "\nSave"
+            db2 = mydb.FMTWrapper('./!my_%s.db'%letter)
+            db2.save( database )
 
     elif sys.argv[1]=='find' and len(sys.argv)==3:
         # COMMAND: simple lookup
@@ -207,13 +216,11 @@ def main():
 
         database={}
         measure = debug.Measure()
-	for letter in [ 'C', 'G', 'H', 'K' ]:
+        for letter in letter_list:
            print "Load %s:\\" %letter
            db = mydb.FMTWrapper('./!my_%s.db'%letter)
            db.load( database )
-        cnt=0
-	for d in database.values():
-          cnt+=len(d)
+           cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
         measure.tick('%d records loaded'%cnt)
 
         print "Lookup"
@@ -227,12 +234,12 @@ def main():
     else:
         # default - benchmark
 
-	for letter in [ 'C', 'G', 'H', 'K' ]:
-           print letter
-           db = mydb.FMTWrapper('./!my_%s.db'%letter)
-           database = debug.Measure.measure_call_silent('',  db.load )
-           debug.Measure.measure_call_silent('',  db.save, database=database, fmt='UJSN' )
-           #debug.Measure.measure_call_silent('',  db.save, database=database )
+        for letter in letter_list:
+            print letter
+            db = mydb.FMTWrapper('./!my_%s.db'%letter)
+            database = debug.Measure.measure_call_silent('',  db.load )
+            cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
+            debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, database=database, fmt='MSGp' )  # 'JSON')
 
 
     """
