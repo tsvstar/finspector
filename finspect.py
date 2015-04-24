@@ -173,28 +173,50 @@ def main():
     except:
         # My own text saver is also fast (faster than any other common solution - pickle/cPickle/json)
         mydb.FMTWrapper.default_fmt = 'TEXT'
+    
 
     if len(sys.argv)<2:
         print "No command given: update, find"
         exit(1)
 
+    #mydb.FMTWrapper.default_fmt = 'TEXT'
     db = mydb.FMTWrapper('./!my_main.db')
     if sys.argv[1]=='update':
         # COMMAND: rescan
         intermediary_saver = Saver('./!!my.~int~.db', period=-60)
+        """
         print "Scan filesystem"
         database= scan_file( u"C:\\", {}, intermediary_saver, verbose = True)
         print
         print "Save"
         db.save( database )
+	"""
+
+	for letter in [ 'C', 'G', 'H', 'K' ]:
+           print "\nScan filesystem %s" %letter
+           database= scan_file( u"%s:\\"%letter, {}, intermediary_saver, verbose = True)
+           print "\nSave"
+           db2 = mydb.FMTWrapper('./!my_%s.db'%letter)
+           db2.save( database )
 
     elif sys.argv[1]=='find' and len(sys.argv)==3:
         # COMMAND: simple lookup
-        print "Load"
-        database = db.load( {} )
-        print "Lookup"
+
         import re
         re_find = re.compile(sys.argv[2], flags=re.IGNORECASE)
+
+        database={}
+        measure = debug.Measure()
+	for letter in [ 'C', 'G', 'H', 'K' ]:
+           print "Load %s:\\" %letter
+           db = mydb.FMTWrapper('./!my_%s.db'%letter)
+           db.load( database )
+        cnt=0
+	for d in database.values():
+          cnt+=len(d)
+        measure.tick('%d records loaded'%cnt)
+
+        print "Lookup"
         for dname,v1 in database.iteritems():
             basename = os.path.basename(dname)
             if re_find.search(basename):
@@ -205,8 +227,12 @@ def main():
     else:
         # default - benchmark
 
-        database = debug.Measure.measure_call_silent('',  db.load )
-        debug.Measure.measure_call_silent('',  db.save, database=database )
+	for letter in [ 'C', 'G', 'H', 'K' ]:
+           print letter
+           db = mydb.FMTWrapper('./!my_%s.db'%letter)
+           database = debug.Measure.measure_call_silent('',  db.load )
+           debug.Measure.measure_call_silent('',  db.save, database=database, fmt='UJSN' )
+           #debug.Measure.measure_call_silent('',  db.save, database=database )
 
 
     """

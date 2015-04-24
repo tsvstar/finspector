@@ -5,8 +5,23 @@ TODO:	dict of optional
 		how to make IPC between threads?
 	Rare intermediary save (60sec) -- whole unfinished branch (no next) up to top are canceled 
 		purpose: make faster directory content scan		     
+        add tail \\ if found name is the directory
+	update wrapper -> if fmt_option exists - set it for format before its .load/.save called [and so squeeze UJSN/JSON; PIC*, families]
 
 	more about symlink/junction point on WIN: http://stackoverflow.com/questions/1447575/symlinks-on-windows
+
+	current_os==Windows => case insensetive, translate '/'->'\'
+	automatic segmented producer - get drive list
+		http://stackoverflow.com/questions/51658/cross-platform-space-remaining-on-volume-using-python
+		http://stackoverflow.com/questions/8319264/how-can-i-get-the-name-of-a-drive-in-python
+		http://stackoverflow.com/questions/827371/is-there-a-way-to-list-all-the-available-drive-letters-in-python
+		http://stackoverflow.com/questions/327718/how-to-list-physical-disks
+		http://stackoverflow.com/questions/1496842/how-to-obtain-physical-drives-in-windows
+
+	--> archives INCREMENTAL (to decrease storage):
+		** based on '>' (store at header? as "<fname_of_db") -- processed by wrapper ( recursively load it on load; preload base dir and make comparision for another one )
+		* simpliest -> completely replace whole dir list (say '+dir' and complete its nonrecursive list, '~dir'=delete)
+		* more complex [not sure that better] - more operational [move dir there, move file, only that file, that files were delete,etc]
 
 === DB TYPES ===
     SEGMENTED DB (config PREFIX-> NAME )
@@ -37,6 +52,9 @@ finspector.py [--options..] command
    --update		(update fsystem and md5 first)
    --create_asof
    -o/--opt [OPTION=VALUE]
+   --stderr             (valuable output at stdout, progress at stderr)
+   --silent
+   --noprogress		(no progress)
 
  commands:
    find      grep

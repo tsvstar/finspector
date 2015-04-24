@@ -162,9 +162,9 @@ class FMTWrapper(object):
             if obj.require=='':
                 rv = obj.load( f, database )
             else:
-                with open(fname,'rb',obj.require) as f1:
+                with codecs.open(self.fname,'rb',obj.require) as f1:
                     f1.seek( f.tell() )
-                    rv = obj.load( f1, database)
+                    rv = obj.load( f1, database )
 
             # TODO!! Postprocess - clean out not matched to areas/areas_exclude
             if self.isDebug:
