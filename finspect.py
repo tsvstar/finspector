@@ -186,8 +186,7 @@ def main():
         print "No command given: update, find"
         exit(1)
 
-    letter_list = [ 'C', 'G', 'H', 'K' ]
-    letter_list = [ 'C','E' ]
+    letter_list = [ 'C', 'E','G', 'H', 'K' ]
 
     #mydb.FMTWrapper.default_fmt = 'TEXT'
     db = mydb.FMTWrapper('./!my_main.db')
@@ -238,6 +237,11 @@ def main():
 
     elif sys.argv[1]=='md5':
 
+        if len(sys.argv)>2:
+            letter_list = set( reduce(lambda ac,x: ac+x, map(list,sys.argv[2:])) )
+        import string
+        letter_list = sorted( filter(lambda s: s in string.ascii_letters, map(lambda c: c.upper(),letter_list) ) )
+
         for letter in letter_list:
             print "Start processing %s" % letter
             db = mydb.FMTWrapper('./!my_%s.db'%letter)
@@ -245,28 +249,31 @@ def main():
             t0 = t1 = time.time()
             processed = processed_cycle = 0
             db.dirty = False
-            for dname in database.keys():
-                for fname in database[dname].keys():
-                    v = database[dname][fname]
-                    if v[0].lower()=='f' and len(v[3])!=22:
-                        processed_cycle += v[2]
-                        fullname = os.path.join(dname,fname)
-                        sys.stdout.write( fullname.encode('cp866','ignore') +chr(13) )
-                        v[3] = calculate_md5(fullname)
-                        db.dirty = True
-                        t2 = time.time()
-                        if (t2-t1)>60:
-                            mb = float(processed_cycle)/(1024*1024)
-                            processed = float(processed) + mb
-                            processed_cycle = 0
-                            print "@tsv Save. Processed %.2fMB (Speed %.2fMB/s)" % ( mb, mb/(t2-t1) )
-                            t1=t2
-                            db.dirty = False
-                            db.save()
-
-            processed += processed_cycle
-            t3 = time.time()
-            print "@tsv Finished %s: (%.2fGb, speed=%.2fMb/s)" % ( letter, processed/1024, processed/(t3-t0))
+            try:
+                for dname in database.keys():
+                    for fname in database[dname].keys():
+                        v = database[dname][fname]
+                        if v[0].lower()=='f' and len(v[3])!=22:
+                            processed_cycle += v[2]
+                            fullname = os.path.join(dname,fname)
+                            sys.stdout.write( fullname.encode('cp866','ignore') +chr(13) )
+                            v[3] = calculate_md5(fullname)
+                            db.dirty = True
+                            t2 = time.time()
+                            if (t2-t1)>60:
+                                mb = float(processed_cycle)/(1024*1024)
+                                processed = float(processed) + mb
+                                processed_cycle = 0
+                                print "@tsv Save. Processed %.2fMB (Speed %.2fMB/s)" % ( mb, mb/(t2-t1) )
+                                t1=t2
+                                db.dirty = False
+                                db.save()
+            finally:
+                processed += processed_cycle
+                t3 = time.time()
+                print "@tsv Finished %s: (%.2fGb, speed=%.2fMb/s)" % ( letter, processed/1024, processed/(t3-t0))
+                if db.dirty:
+                    db.save()
 
 
     elif sys.argv[1]=='bench':
@@ -279,7 +286,7 @@ def main():
             database = debug.Measure.measure_call_silent('',  db.load )
             cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
 
-            fmt = None  # keep format as is
+            fmt = 'TEXT'    #None  # keep format as is
             debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, fname=fname+".bench", database=database, fmt=fmt )
     else:
         print "Unknown command: %s" % sys.argv[1]

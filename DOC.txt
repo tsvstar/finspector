@@ -1,17 +1,45 @@
-TODO:	dict of optional
+TODO:
+change format a little:
+	A) MAKE POSSIBLE TO HAVE RAW TEXT FORMAT(COMPLETELY EDITABLE BY ANY UTF-8 EDITOR)
+		make detecttag text (change chr(7) to something
+	        if len(dbtype)<14 make last char '|' (auto cut it on load) - to avoid removal it
+		find first '\n' - if eol was changed
+
+	B) EXTEND FUNCTIONS OF EXTRA LINES
+		extra lines could contain:
+		#comment
+		#option OPTIONNAME=value
+		   --> if option{zip}=level defined - than main body is compressed(old asof to decrease their size)
+		remember as comment "ASOF dd.mm.yy hh:mm"
+
+	C) ALGORITHM CHANGES
+		>> dbtime is filled when create method +.touch() method
+			reason - we could calculate md5 a long time after scan, but it's valid only at that time
+
+TODO:	
 	skip dir mtime
-	MAKE BACKUP BEFORE SAVE
+
+	MAKE PLUGIN SYSTEM: do import, give that block to loader and say what should be base class
+		reason --> we have several formats, we have probably several kind of compress
+
+	+MAKE BACKUP BEFORE SAVE
+	+SAVE md5 INFO and give report ON KeyboardInterrupt
+	+dict of optional
+	+update wrapper -> if fmt_option exists - set it for format before its .load/.save called [and so squeeze UJSN/JSON; PIC*, families]
+
+	simple progress calculation	
 
 	Multithread: 1) scaning of directories; 2) calculate md5
 		how to make IPC between threads?
-	Rare intermediary save (60sec) -- whole unfinished branch (no next) up to top are canceled 
+	dynamic output - only twice per second (to decrease impact on a lot of small files)
+	[??? is this useful]Rare intermediary save (60sec) -- whole unfinished branch (no next) up to top are canceled 
 		purpose: make faster directory content scan		     
-        add tail \\ if found name is the directory
-	update wrapper -> if fmt_option exists - set it for format before its .load/.save called [and so squeeze UJSN/JSON; PIC*, families]
 
 	more about symlink/junction point on WIN: http://stackoverflow.com/questions/1447575/symlinks-on-windows
 
 	current_os==Windows => case insensetive, translate '/'->'\'
+        add tail \\ if found name is the directory
+
 	automatic segmented producer - get drive list
 		http://stackoverflow.com/questions/51658/cross-platform-space-remaining-on-volume-using-python
 		http://stackoverflow.com/questions/8319264/how-can-i-get-the-name-of-a-drive-in-python
@@ -23,11 +51,17 @@ TODO:	dict of optional
 		** based on '>' (store at header? as "<fname_of_db") -- processed by wrapper ( recursively load it on load; preload base dir and make comparision for another one )
 		* simpliest -> completely replace whole dir list (say '+dir' and complete its nonrecursive list, '~dir'=delete)
 		* more complex [not sure that better] - more operational [move dir there, move file, only that file, that files were delete,etc]
+	---> DECREMENTAL:
+		-- back incremental order (asof snapshots are stored in this case)
+
+	.save( incremental='filename' )
 
 	--> simple segment:
 		* completely text file in utf-8.
 		* firstline is "FILE_INSPECTOR_SEGMENTED_DB"
 		* [+-]db_relative_path\t[dir1|dir2|...]
+		* if no path given - means last (cut all leading \t after path)
+		* '#' first symbol means comment, empty lines are ignored
 
 		* [not sure - harder to configure] other lines are JSON: { 'db_fname': 
 						{
@@ -36,13 +70,34 @@ TODO:	dict of optional
 						}
 					}
 
+MODULES:
+	plugin.py
+	plugins_db.py
+	utils.py
+	debug.py (DBG_...)
+	config.py(??)
+
 
 === DB TYPES ===
     SEGMENTED DB (config PREFIX-> NAME )
     ASOF DB (snapshot for given date)
     ?? ~.intermediary -- half scanned( not needed: fsystem scan is quick, than absent md5 is just empty)
 
+
 === DB FORMAT ===
+   HEADER
+    4s 4s 4x 14s 2s = (4s)tag{'FINS'}, (4s)fmt_type, (4x)ver_num, (4x)timestamp, (14s)=db_type{'INTERMEDIARY  ','MAIN','SEGMENTED'}, {2s} = '\r\n'
+
+   EXTRA_LINES (end condition is empty line):
+        # Comments (like: '#ASOF: 23.03.14 25:15')
+	@option=value (specific option is '@compress=zip:level' means that body is compressed)
+	+dir_included
+	-dir_excluded
+
+   BODY: depends on format and options
+
+
+=== DB FORMAT (old ver)===
    HEADER
        tsv@f_inspector|{main|intermediary|segmented}|asof_decimal_tstamp|area\n\n
 
@@ -62,7 +117,7 @@ finspector.py [--options..] command
    --where "starts"   (accumulative option)
    --config "file.cfg"
    --db  "file.db"
-   --dirty	        (update only filesystem. so use name+size+mtime)
+   --dirty	        (update only filesystem. so use name+size+mtime)	-- by default no update done at all, but if intermediary DB found and not complete -- finish its calculation first
    --update		(update fsystem and md5 first)
    --create_asof
    -o/--opt [OPTION=VALUE]
@@ -70,10 +125,14 @@ finspector.py [--options..] command
    --silent
    --noprogress		(no progress)
 
+   --raw 	- print only essential info
+   --force
+
  commands:
    find      grep
    findpreg  perl regexp
-   update    [where,..]
+   update    [where,..] 
+	--noscan --force
    check     [where,..]          -- check integrity of files (by md5 hash)
    dupes     [where,..]          -- find duplicates (try to collapse to whole dir)
    changes   [where,..]          -- find what was changed (since last or given asof) (with or without update)
@@ -83,9 +142,16 @@ finspector.py [--options..] command
    restore   filelist where	 -- restore files by list from their sources
    rs				 -- make read-solomon keys
 
+   scan, md5	- until finished is writed to intermediary
+   database list - 
+   database save -
+
 
 === CONFIG ===
 # Options to make md5 update faster
+
+QUICK_UPDATE = update+move+copy
+
 QUICK_UPDATE = True
 QUICK_MOVE_DETECT = True              # If dir namesize hash match (one removed, another added) - think that this is moved {otherwise use md5 hash}
 QUICK_COPY_DETECT = True              # If dir namesize hash match (one existed, another added) - think that this is copy {otherwise use md5 hash}

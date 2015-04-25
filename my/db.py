@@ -206,6 +206,12 @@ class FMTWrapper(object):
         self.ver = obj.dbver
         self.dbtime = time.time()
 
+        fname_bak = self.fname+".bak"
+        if os.path.exists(self.fname):
+            if os.path.exists(fname_bak):
+                os.unlink(fname_bak)
+            os.rename(self.fname,fname_bak)
+
         with open( self.fname, 'wb' ) as f:
             f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
             for k in self.areas.keys():
@@ -223,10 +229,14 @@ class FMTWrapper(object):
             if self.isDebug: print "Do save %s to %s" % ( type(obj), self.fname )
             if obj.require == '':
                 f.flush()
-                return obj.save( f, database )
+                rv = obj.save( f, database )
 
-        with codecs.open( self.fname, 'ab', obj.require ) as f:
-            return obj.save( f, database )
+        if obj.require!='':
+            with codecs.open( self.fname, 'ab', obj.require ) as f:
+                rv = obj.save( f, database )
+
+        if os.path.exists(fname_bak):
+            os.unlink(fname_bak)
 
 
 # 0ftype, (1fname), 1mtime, 2fsize, 3md5, 4opt
