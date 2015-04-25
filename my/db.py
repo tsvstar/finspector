@@ -1,16 +1,10 @@
 # coding=utf8
 
 # HEADER:
-#   4s = tag
-#   4s = fmt type
-#   4x = version
-#   4x = time
-#   14s = db type
-#       12345678901234
-#       INTERMEDIARY
-#       MAIN
-#       SEGMENTED
-#   2s =\r\n
+#   4s 4s 4x 14s 2s = (4s)tag, (4s)fmt_type, (4x)ver_num, (4x)timestamp, (14s)=db_type{'INTERMEDIARY  ','MAIN','SEGMENTED'}, {2s} = '\r\n'
+# MAIN DATABASE FORMAT:
+#   database[dname][fname] = [0ftype, 1mtime, 2fsize, 3md5{22sym-string}, 4opt]
+
 
 """ TODO: Not sure that .load() needs to update database: intermediary is required for dir-scan only. and even more I actually not sure that it really required """
 
@@ -49,18 +43,22 @@ class FMTWrapper(object):
     DB_FMT_LINE = DB_HEADER_TAG+"FMT VER TIME12345678901234\r\n"
 
     #
-    isDebug = False
-    default_fmt = 'TEXT'
+    isDebug = False                     # print debug information
+    default_fmt = 'TEXT'                # default format of database
 
     # INSTANCE MEMBERS
-    fmt = None
-    ver = None
-    dbtime = time.time()
+    fmt = None                  # this instance format
+    ver = None                  # this instance format version was loaded
+    dbtime = time.time()        #
     dbtype = '12345678901234'
 
-    fname = ""
-    database = None       # database[dirname][fname] = [ 0ftype, 1mtime, 2fsize, 3md5, 4opt ]
+    fname = ""              # name of file (or path)
+    database = None         # database[dirname][fname] = [ 0ftype, 1mtime, 2fsize, 3md5, 4opt ]
 
+    options = {}            # this will be copied to format class (control load/save nuances)
+
+
+    """ METHODS """
     def __init__( self, fname = '', fmt=None):
         if not self.formats:
             self.formats, self.save_formats = self.initFormats()
@@ -80,12 +78,19 @@ class FMTWrapper(object):
                     if obj.dbver in tgt:
                         print("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
                         raise Exception("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
-                    tgt[obj.dbver] = obj
 
                     if hasattr(obj,'init'):
-                        obj.init()
+                        result = obj.init()
+                        if not result:
+                            continue
+                    tgt[obj.dbver] = obj
             except Exception as e:
                 pass
+
+        # Clean uninitialized formats
+        for k in FMTWrapper.formats.keys():
+            if not len(FMTWrapper.formats[k]):
+                del FMTWrapper.formats[k]
 
         if FMTWrapper.isDebug:
             print FMTWrapper.formats
@@ -113,7 +118,7 @@ class FMTWrapper(object):
             res = f.read(len(self.DB_FMT_LINE))
             if res[:4]!=self.DB_HEADER_TAG:
                 raise Exception("Wrong TAG: This is not a FInspector DB")
-            self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14]
+            self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14].rstrip()
             if self.fmt not in self.formats:
                 raise Exception("Unknown DB Format: %s"%self.fmt)
             if self.ver not in self.formats[self.fmt]:
@@ -197,6 +202,10 @@ class FMTWrapper(object):
         if self.fmt not in self.save_formats:
             raise Exception("Fail to save: don't know how to write '%s' format"%self.fmt)
 
+        obj = self.save_formats[self.fmt]()
+        self.ver = obj.dbver
+        self.dbtime = time.time()
+
         with open( self.fname, 'wb' ) as f:
             f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
             for k in self.areas.keys():
@@ -211,7 +220,6 @@ class FMTWrapper(object):
 
             # TODO: Preprocess! Exclude not matched to areas/exclude_areas
 
-            obj = self.save_formats[self.fmt]()
             if self.isDebug: print "Do save %s to %s" % ( type(obj), self.fname )
             if obj.require == '':
                 f.flush()
@@ -349,6 +357,7 @@ class _DBFMT_ULTRAJSON(_DBFMTMain):
             _DBFMT_ULTRAJSON.options['json.lib'] = 'ujson'   # fastest available library
         except ImportError:
             _DBFMT_ULTRAJSON.options['json.lib'] = 'json'    # fallback library
+        return True
 
     def _get_lib( self ):
         try:
@@ -382,10 +391,17 @@ class _DBFMT_MSGPACK(_DBFMTMain):
     def init():
         try:
             from msgpack import _unpacker, _packer
-            _DBFMT_MSGPACK.options['msgpack.ext'] = True      # means "use c-extension"
+            module = True      # means "use c-extension"
         except ImportError:
-            _DBFMT_MSGPACK.options['msgpack.ext'] = False     # means "use pure python"
-        print _DBFMT_MSGPACK.options['msgpack.ext']
+            try:
+                import msgpack
+                module  = False     # means "use pure python"
+            except ImportError:
+                module = None       # means "no msgpack module found"
+
+        _DBFMT_MSGPACK.options['msgpack.ext'] = module
+        print module
+        return module is not None
 
     def load( self, f, database ):
         import msgpack

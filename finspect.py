@@ -50,7 +50,7 @@ def calculate_md5( fname, chunk_size = 512*1024 ):
                 if len(s)<chunk_size:
                     break
     except Exception as e:
-        print "Error for file %s" % fname
+        print "Error for file %s (%s)" % ( fname.encode('cp866','ignore'), str(e).encode('cp866','ignore') )
     return base64.b64encode( m.digest())[:-2]
 
 
@@ -167,7 +167,7 @@ def main():
     import my.db as mydb, my.debug as debug
 
     try:
-        db = FMTWrapper()
+        db = mydb.FMTWrapper()
         # a) Fastest way - is "msgpack" as a compiled-extension
         if db.getFormat('MSGp') and db.getFormat('MSGp').options.get('msgpack.ext',False):
             mydb.FMTWrapper.default_fmt = 'MSGp'
@@ -176,21 +176,22 @@ def main():
             import ujson
             # If UltraJSON exists - that is fastest way to load/save DB
             mydb.FMTWrapper.default_fmt = 'JSON'
-    except:
+    except Exception as e:
         # c) If no fast complied modules exists (PyPy) - use own text saver
         # It is faster other common solution - pickle/cPickle/json
         mydb.FMTWrapper.default_fmt = 'TEXT'
+    print mydb.FMTWrapper.default_fmt
 
     if len(sys.argv)<2:
         print "No command given: update, find"
         exit(1)
 
     letter_list = [ 'C', 'G', 'H', 'K' ]
-    letter_list = [ 'C' ]
+    letter_list = [ 'C','E' ]
 
     #mydb.FMTWrapper.default_fmt = 'TEXT'
     db = mydb.FMTWrapper('./!my_main.db')
-    if sys.argv[1]=='update':
+    if sys.argv[1] in ['update','scan']:
         # COMMAND: rescan
         intermediary_saver = Saver('./!!my.~int~.db', period=-60)
         """
@@ -202,17 +203,17 @@ def main():
 	    """
 
         for letter in letter_list:
+            db2 = mydb.FMTWrapper('./!my_%s.db'%letter)
             print "\nScan filesystem %s" %letter
             database= scan_file( u"%s:\\"%letter, {}, intermediary_saver, verbose = True)
             print "\nSave"
-            db2 = mydb.FMTWrapper('./!my_%s.db'%letter)
             db2.save( database )
 
-    elif sys.argv[1]=='find' and len(sys.argv)==3:
+    elif sys.argv[1]=='find':
         # COMMAND: simple lookup
-
-        import re
-        re_find = re.compile(sys.argv[2], flags=re.IGNORECASE)
+        if len(sys.argv)<3:
+            print "No pattern to find given"
+            exit(1)
 
         database={}
         measure = debug.Measure()
@@ -223,23 +224,65 @@ def main():
            cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
         measure.tick('%d records loaded'%cnt)
 
-        print "Lookup"
-        for dname,v1 in database.iteritems():
-            basename = os.path.basename(dname)
-            if re_find.search(basename):
-                say( dname )
-            for fname in v1.keys():
-                if re_find.search(fname):
-                    say( os.path.join(dname,fname) )
-    else:
-        # default - benchmark
+        import re
+        for pattern in sys.argv[2:]:
+            print "Lookup '%s'" % pattern
+            re_find = re.compile(pattern, flags=re.IGNORECASE)
+            for dname,v1 in database.iteritems():
+                basename = os.path.basename(dname)
+                if re_find.search(basename):
+                    say( dname )
+                for fname in v1.keys():
+                    if re_find.search(fname):
+                        say( os.path.join(dname,fname) )
+
+    elif sys.argv[1]=='md5':
+
+        for letter in letter_list:
+            print "Start processing %s" % letter
+            db = mydb.FMTWrapper('./!my_%s.db'%letter)
+            database = db.load()
+            t0 = t1 = time.time()
+            processed = processed_cycle = 0
+            db.dirty = False
+            for dname in database.keys():
+                for fname in database[dname].keys():
+                    v = database[dname][fname]
+                    if v[0].lower()=='f' and len(v[3])!=22:
+                        processed += v[2]
+                        fullname = os.path.join(dname,fname)
+                        sys.stdout.write( fullname.encode('cp866','ignore') +chr(13) )
+                        v[3] = calculate_md5(fullname)
+                        db.dirty = True
+                        t2 = time.time()
+                        if (t2-t1)>60:
+                            mb = float(processed_cycle)/(1024*1024)
+                            processed = float(processed) + mb
+                            processed_cycle = 0
+                            t1=t2
+                            print "@tsv Save. Processed %.2fMB (Speed %.2fMB/s)" % ( mb, mb/(t2-t1) )
+                            db.dirty = False
+                            db.save()
+
+            processed += processed_cycle
+            t3 = time.time()
+            print "@tsv Finished %s: (%.2fGb, speed=%.2fMb/s)" % ( letter, processed/1024, processed/(t3-t0))
+
+
+    elif sys.argv[1]=='bench':
+        # benchmark
 
         for letter in letter_list:
             print letter
-            db = mydb.FMTWrapper('./!my_%s.db'%letter)
+            fname = './!my_%s.db'%letter
+            db = mydb.FMTWrapper(fname)
             database = debug.Measure.measure_call_silent('',  db.load )
             cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
-            debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, database=database, fmt='MSGp' )  # 'JSON')
+
+            fmt = None  # keep format as is
+            debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, fname=fname+".bench", database=database, fmt=fmt )
+    else:
+        print "Unknown command: %s" % sys.argv[1]
 
 
     """
