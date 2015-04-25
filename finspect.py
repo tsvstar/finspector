@@ -249,7 +249,7 @@ def main():
                 for fname in database[dname].keys():
                     v = database[dname][fname]
                     if v[0].lower()=='f' and len(v[3])!=22:
-                        processed += v[2]
+                        processed_cycle += v[2]
                         fullname = os.path.join(dname,fname)
                         sys.stdout.write( fullname.encode('cp866','ignore') +chr(13) )
                         v[3] = calculate_md5(fullname)
@@ -259,8 +259,8 @@ def main():
                             mb = float(processed_cycle)/(1024*1024)
                             processed = float(processed) + mb
                             processed_cycle = 0
-                            t1=t2
                             print "@tsv Save. Processed %.2fMB (Speed %.2fMB/s)" % ( mb, mb/(t2-t1) )
+                            t1=t2
                             db.dirty = False
                             db.save()
 

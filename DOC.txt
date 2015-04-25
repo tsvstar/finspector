@@ -1,5 +1,6 @@
 TODO:	dict of optional
 	skip dir mtime
+	MAKE BACKUP BEFORE SAVE
 
 	Multithread: 1) scaning of directories; 2) calculate md5
 		how to make IPC between threads?
