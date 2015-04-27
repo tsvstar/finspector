@@ -69,6 +69,7 @@ class FMTWrapper(object):
         self.areas_exclude = {}      # db_areas[name]
         self.database = {}
         self.options = FMTWrapper.options.copy()
+        self.stream_format = {'gzip':GZIPStream, 'gzipraw':GZIPRawStream}
 
     @staticmethod
     def initFormats():
@@ -190,11 +191,10 @@ class FMTWrapper(object):
             obj.offset = offset
             obj.fname = self.fname
             obj.options.update( self.options )
-            if self.options.get('compress','').startswith('gzip:'):
-                with GZIPRawStream(f) as f1:
-                    rv = obj.load( f1, database )
-            else:
-                    rv = obj.load( f, database )
+            sformat = self.options.get('compress','').split(':',1)[0]
+            stream = self.stream_format.get( sformat, BaseStream )
+            with stream(f) as f1:
+                rv = obj.load( f1, database )
 
             # TODO!! Postprocess - clean out not matched to areas/areas_exclude
             if self.isDebug:
@@ -250,18 +250,16 @@ class FMTWrapper(object):
 
             compress = self.options.get('compress','').split(':',1)
             if self.isDebug: print "Do save %s to %s" % ( type(obj), self.fname )
+            clevel = int(compress[1]) if len(compress)>1 else 5
             if compress[0]!='':
-                clevel = int(compress[1]) if len(compress)>1 else 5
-                if compress[0]!='gzip':
+                if compress[0] not in self.stream_format:
                     raise Exception("Fail to save: don't know '%s' compress "%compress)
                 if self.isDebug: print "Compress as %s" % ( compress )
-
+            stream = self.stream_format.get( compress[0], BaseStream )
             f.flush()
-            if compress[0]!='':
-                with GZIPRawStream(f,clevel) as f1:
-                    rv = obj.save( f1, database )
-            else:
-                    rv = obj.save( f, database )
+
+            with stream(f,compresslevel = clevel) as f1:
+                rv = obj.save( f1, database )
 
         if os.path.exists(fname_bak):
             os.unlink(fname_bak)
@@ -274,7 +272,7 @@ class FMTWrapper(object):
 """
 
 class BaseStream(object):
-    def __init__( self, f ):
+    def __init__( self, f, *kw,**kww ):
         self._fh = f
     def __getattr__( self, method, *kw,**kww):
         return getattr( self._fh, method )
@@ -286,7 +284,7 @@ class BaseStream(object):
         self.close()
 
 class UTF8Stream(BaseStream):
-    def read( self, *kw ):
+    def read( self, *kw,**kww ):
         rv = self._fh.read(*kw)
         if isinstance(rv,str):
             return rv.decode('utf-8')
@@ -299,12 +297,9 @@ class UTF8Stream(BaseStream):
 import zlib, struct
 
 # Very simple class: doesn't support seek/tell, load whole file...
-#   based on import gzip (do not use it because it for unknown reason say 'CRC error' on load)
-#       f=gzip.GzipFile(fileobj=f, compresslevel=clevel)
-# TODO: may error was the reason that GZIP file wasn't closed, so wrap it into context too
 class GZIPRawStream(BaseStream):
 
-    def __init__( self, f, compresslevel = 5 ):
+    def __init__( self, f, compresslevel = 5, *kw,**kww ):
         self._fh = f
         self.offset = f.tell()
         self.crc = zlib.crc32("") & 0xffffffffL
@@ -359,6 +354,19 @@ class GZIPRawStream(BaseStream):
     def _read32u(self, f):
         return struct.unpack( 'L', f.read(4) )[0]
 
+class GZIPStream(BaseStream):
+
+    def __init__( self, f, compresslevel = 5 ):
+        self.gz=gzip.GzipFile(fileobj=f, compresslevel=compresslevel)
+
+    def close(self):
+        self.gz.close()
+
+    def read(self,*kw,**kww):
+        return self.gz.read(*kw,**kww)
+
+    def write(self,*kw,**kww):
+        return self.gz.write(*kw,**kww)
 
 
 # 0ftype, (1fname), 1mtime, 2fsize, 3md5, 4opt
