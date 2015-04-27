@@ -191,8 +191,10 @@ class FMTWrapper(object):
             obj.fname = self.fname
             obj.options.update( self.options )
             if self.options.get('compress','').startswith('gzip:'):
-                f = gzip.GzipFile(fileobj=f)
-            rv = obj.load( f, database )
+                with GZIPRawStream(f) as f1:
+                    rv = obj.load( f1, database )
+            else:
+                    rv = obj.load( f, database )
 
             # TODO!! Postprocess - clean out not matched to areas/areas_exclude
             if self.isDebug:
@@ -256,8 +258,10 @@ class FMTWrapper(object):
 
             f.flush()
             if compress[0]!='':
-                f=gzip.GzipFile(fileobj=f, compresslevel=clevel)
-            rv = obj.save( f, database )
+                with GZIPRawStream(f,clevel) as f1:
+                    rv = obj.save( f1, database )
+            else:
+                    rv = obj.save( f, database )
 
         if os.path.exists(fname_bak):
             os.unlink(fname_bak)
@@ -273,7 +277,13 @@ class BaseStream(object):
     def __init__( self, f ):
         self._fh = f
     def __getattr__( self, method, *kw,**kww):
-         return getattr( self._fh, method )
+        return getattr( self._fh, method )
+    def close(self):
+        pass
+    def __enter__(self, *kw,**kww):
+        return self
+    def __exit__(self, *kw,**kww):
+        self.close()
 
 class UTF8Stream(BaseStream):
     def read( self, *kw ):
@@ -286,12 +296,15 @@ class UTF8Stream(BaseStream):
             s = s.encode('utf-8')
         return self._fh.write(s)
 
-# Just simple class which doesn't support seek/tell,...
-# based on import gzip (but that was fail because crc
-class GZIPRawStream(BaseStream):
-    import zlib, struct
+import zlib, struct
 
-    def __init__( self, f, compresslevel ):
+# Very simple class: doesn't support seek/tell, load whole file...
+#   based on import gzip (do not use it because it for unknown reason say 'CRC error' on load)
+#       f=gzip.GzipFile(fileobj=f, compresslevel=clevel)
+# TODO: may error was the reason that GZIP file wasn't closed, so wrap it into context too
+class GZIPRawStream(BaseStream):
+
+    def __init__( self, f, compresslevel = 5 ):
         self._fh = f
         self.offset = f.tell()
         self.crc = zlib.crc32("") & 0xffffffffL
@@ -319,33 +332,34 @@ class GZIPRawStream(BaseStream):
     def close(self):
         if hasattr(self,'compress'):
             data = self.compress.flush()
-            self.len+=len(data)
+            self._len+=len(data)
             self.crc = zlib.crc32(data, self.crc) & 0xffffffffL
             self._fh.write(data)
             self._fh.seek(self.offset)
-            self.write32u(f,self.len)
-            self.write32u(f,self.crc)
-
-            #import gzip
+            self._write32u(self._fh,self._len)
+            self._write32u(self._fh,self.crc)
 
     def read(self,size=None):
         tell = self.tell
         if size is None:
-            tell = len(self.content)
+            size = len(self.content)
         self.tell = self.tell+size
         self.tell = len(self.content) if self.tell>len(self.content) else self.tell
         return self.content[tell:self.tell]
 
     def write(self,s):
         data = self.compress.compress(s)
+        self._fh.write(data)
         self.crc = zlib.crc32(data, self.crc) & 0xffffffffL
         self._len += len(data)
 
     def _write32u(self, f, val):
         f.write( struct.pack('L',val) )
 
-    def _read32u(self, f, val):
-        return struct.unpack( 'L', f.read(4) )
+    def _read32u(self, f):
+        return struct.unpack( 'L', f.read(4) )[0]
+
+
 
 # 0ftype, (1fname), 1mtime, 2fsize, 3md5, 4opt
 
