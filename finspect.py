@@ -290,7 +290,7 @@ def main():
             cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
 
             fmt = None  # keep format as is
-            db.options['compress']='gzip:5'
+            db.options['compress']='gzipraw:5'
             debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, fname=fname+".bench", database=database, fmt=fmt )
     else:
         print "Unknown command: %s" % sys.argv[1]

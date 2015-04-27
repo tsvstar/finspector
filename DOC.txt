@@ -53,6 +53,8 @@ TODO:
 		* more complex [not sure that better] - more operational [move dir there, move file, only that file, that files were delete,etc]
 	---> DECREMENTAL:
 		-- back incremental order (asof snapshots are stored in this case)
+		@base_file = x
+		+._loadHeader(), ._writeHeader() - to fast update headers list (change base_file particulary)
 
 	.save( incremental='filename' )
 

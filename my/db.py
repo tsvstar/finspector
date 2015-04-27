@@ -113,6 +113,78 @@ class FMTWrapper(object):
         else:
             return self.formats[fmt].get(ver,None)
 
+    # load all header for given file
+    # PURPOSE:  a) fix headers without rebuilding body (example: if base file was renamed)
+    #           b) read headers to quickly get info about database settings
+    def loadHeaders( self, f, checkFunc = None ):
+        self.lineno = 1
+        res = f.read(len(self.DB_FMT_LINE))
+        if res[:4]!=self.DB_HEADER_TAG:
+            raise Exception("Wrong TAG: This is not a FInspector DB")
+        self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14].rstrip()
+        if checkFunc is not None:
+            checkFunc( self )
+
+        # Binary safe preload buffer to find empty line
+        lines = ''
+        f.seek(0)
+        while lines.find('\n\n')<0:
+            l=f.read(256)
+            if not l:
+                break
+            lines+=l
+        getline_vars = [0]
+        def getline():
+            stop = lines.find('\n',getline_vars[0])+1
+            s = lines[getline_vars[0]:stop]
+            getline_vars[0] = stop
+            return s
+
+        # Binary safe Load areas of responsibility
+        self.areas, self.areas_exclude = {}, {}
+        idx = 0
+        s = getline()
+        self.lineno += 1
+        self.offset = len(s)
+        #print "offset=",offset     #@tsv
+        while True:
+          try:
+            s = getline()
+            self.offset += len(s)
+            if not s.strip():
+                break
+            elif s[0]=='+':
+                self.areas[s[1:].decode('utf-8')]=1
+            elif s[0]=='-':
+                self.areas_exclude[s[1:].decode('utf-8')]=1
+            elif s[0]=='#':
+                # comment - skip it
+                continue
+            elif s[0]=='@':
+                optname,optvalue = s[1:].decode('utf-8').split('=',1)
+                self.options[ optname.strip() ] = optvalue.strip()
+            else:
+                raise Exception( "Unknown header type at line %d: %s" % (self.lineno,s) )
+          finally:
+             self.lineno+=1
+
+        f.seek( self.offset )        # fix offset after readline()
+
+    def saveHeaders( self, f ):
+            f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.ver, time.time(), self.dbtype ) )
+            f.write( time.strftime("#ASOF: %d.%m.%y %H:%M\n", time.localtime(self.dbtime)) )
+            for optname, optvalue in self.options.items():
+                f.write("@%s=%s\n"%(optname.encode('utf-8'), optvalue.encode('utf-8')) )  #,'backslashreplace'
+            for k in self.areas.keys():
+                if isinstance(k,unicode):
+                    k = k.encode('utf-8')
+                f.write("+%s\n"% k)
+            for k in self.areas_exclude.keys():
+                if isinstance(k,unicode):
+                    k = k.encode('utf-8')
+                f.write("-%s\n"%k)
+            f.write('\n')
+
     def load( self, database = None, fname = None ):
         if self.isDebug: dbg = debug.Measure('load')
         f = None
@@ -124,71 +196,21 @@ class FMTWrapper(object):
         try:
             f = open(self.fname,'rb')   # codecs.open(self.fname,'rb','utf-8')
 
-            # Load header
-            lineno = 1
-            res = f.read(len(self.DB_FMT_LINE))
-            if res[:4]!=self.DB_HEADER_TAG:
-                raise Exception("Wrong TAG: This is not a FInspector DB")
-            self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14].rstrip()
-            if self.getFormat( self.fmt ) is None:
-                raise Exception("Unknown DB Format: %s"%self.fmt)
-            if self.getFormat( self.fmt, self.ver ) is None:
-                raise Exception("Unsupported DB Ver: %s.%s"%(self.fmt,self.ver))
-            lineno+=1
+            def checkHeader( self ):
+                if self.getFormat( self.fmt ) is None:
+                    raise Exception("Unknown DB Format: %s"%self.fmt)
+                if self.getFormat( self.fmt, self.ver ) is None:
+                    raise Exception("Unsupported DB Ver: %s.%s"%(self.fmt,self.ver))
 
-            offset = len(res)
-
-            # Binary safe preload buffer to find empty line
-            lines = ''
-            f.seek(0)
-            while lines.find('\n\n')<0:
-                l=f.read(256)
-                if not l:
-                    break
-                lines+=l
-            getline_vars = [0]
-            def getline():
-                stop = lines.find('\n',getline_vars[0])+1
-                s = lines[getline_vars[0]:stop]
-                getline_vars[0] = stop
-                return s
-
-            # Binary safe Load areas of responsibility
-            self.areas, self.areas_exclude = {}, {}
-            idx = 0
-            s = getline()
-            offset = len(s)
-            #print "offset=",offset     #@tsv
-            while True:
-              try:
-                s = getline()
-                offset += len(s)
-                if not s.strip():
-                    break
-                elif s[0]=='+':
-                    self.areas[s[1:].decode('utf-8')]=1
-                elif s[0]=='-':
-                    self.areas_exclude[s[1:].decode('utf-8')]=1
-                elif s[0]=='#':
-                    # comment - skip it
-                    continue
-                elif s[0]=='@':
-                    optname,optvalue = s[1:].decode('utf-8').split('=',1)
-                    self.options[ optname.strip() ] = optvalue.strip()
-                else:
-                    raise Exception( "Unknown header type at line %d: %s" % (lineno,s) )
-              finally:
-                 lineno+=1
-
-            f.seek( offset )        # fix offset after readline()
+            self.loadHeaders( f, checkHeader )
 
             if self.isDebug: dbg.tick('headers')
 
             # Find corresponend processor and call it
             obj = self.getFormat( self.fmt, self.ver )()
             if self.isDebug: print "Do load %s from %s" %( type(obj), self.fname)
-            obj.lineno = lineno
-            obj.offset = offset
+            obj.lineno = self.lineno
+            obj.offset = self.offset
             obj.fname = self.fname
             obj.options.update( self.options )
             sformat = self.options.get('compress','').split(':',1)[0]
@@ -222,6 +244,7 @@ class FMTWrapper(object):
 
         obj = self.getFormat( self.fmt )()
         self.ver = obj.dbver
+        self.dbtype = dbtype[:14]
         self.dbtime = time.time()
         obj.options.update( self.options )
 
@@ -232,19 +255,7 @@ class FMTWrapper(object):
             os.rename(self.fname,fname_bak)
 
         with open( self.fname, 'wb' ) as f:
-            f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
-            f.write( time.strftime("#ASOF: %d.%m.%y %H:%M\n", time.localtime(self.dbtime)) )
-            for optname, optvalue in self.options.items():
-                f.write("@%s=%s\n"%(optname.encode('utf-8'), optvalue.encode('utf-8')) )  #,'backslashreplace'
-            for k in self.areas.keys():
-                if isinstance(k,unicode):
-                    k = k.encode('utf-8')
-                f.write("+%s\n"% k)
-            for k in self.areas_exclude.keys():
-                if isinstance(k,unicode):
-                    k = k.encode('utf-8')
-                f.write("-%s\n"%k)
-            f.write('\n')
+            self.saveHeaders( f )
 
             # TODO: Preprocess! Exclude not matched to areas/exclude_areas
 
@@ -297,6 +308,7 @@ class UTF8Stream(BaseStream):
 import zlib, struct
 
 # Very simple class: doesn't support seek/tell, load whole file...
+# But this make operations noticeable faster than GZIPStream
 class GZIPRawStream(BaseStream):
 
     def __init__( self, f, compresslevel = 5, *kw,**kww ):
