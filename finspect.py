@@ -2,6 +2,8 @@
 
 import sys, os, time, codecs
 
+#TODO: gzip doesn't work, although provide compresion 2-3 times for JSON
+
 
 database = {}       #   [directory] ["dir"|"file"] [name]  = [0mtime, 1md5, 2size]
                     #   [directory] [name] = [0type, 1mtime, 2size, 3md5, 4hexstr_tstamp_snapshot?? ]       # type = File, Dir, Link
@@ -139,6 +141,7 @@ def calc_directories( database, calcmd5 = False ):
 
 
 
+import gzip
 
 class Saver(object):
     def __init__( self, fname, period ):
@@ -278,6 +281,52 @@ def main():
 
     elif sys.argv[1]=='bench':
         # benchmark
+        """
+        try:
+            import gzip
+            f=gzip.GzipFile(filename='!test', mode='wb',compresslevel=5)
+            f.write('AAAAA')
+            f.close()
+            f=gzip.GzipFile(filename='!test', mode='rb',compresslevel=5)
+            f.read()
+            print "!!!"
+
+            import zlib
+            compresslevel = 5
+            compress = zlib.compressobj(compresslevel,
+                                             zlib.DEFLATED,
+                                             -zlib.MAX_WBITS,
+                                             zlib.DEF_MEM_LEVEL,
+                                             0)
+            vvv = compress.compress('AAAA')
+            vvv += compress.compress('BBBB')
+            vvv += compress.flush()
+            #self.crc = zlib.crc32("") & 0xffffffffL
+            #self.crc = zlib.crc32(data, self.crc) & 0xffffffffL
+            print vvv
+
+            decompress = zlib.decompressobj(-zlib.MAX_WBITS)
+            v2=decompress.decompress(vvv)
+            v2+=decompress.flush()
+            print v2
+            print "result^^^"
+
+            import gzip,cStringIO
+            f2 = cStringIO.StringIO()
+            f=gzip.GzipFile(fileobj=f2, mode='wb',compresslevel=5)
+            ##obj.save( f, database )
+            f.write("AAAAA")
+            vvvv = f2.getvalue()
+            print vvvv
+            f2.close()
+            f2 = cStringIO.StringIO(vvvv)
+            f3=gzip.GzipFile(fileobj=f2,mode='r')
+            vvv = f3.read()
+            exit(1)
+        finally:
+            pass
+        """
+
 
         for letter in letter_list:
             print letter
@@ -286,7 +335,8 @@ def main():
             database = debug.Measure.measure_call_silent('',  db.load )
             cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
 
-            fmt = 'TEXT'    #None  # keep format as is
+            fmt = None  # keep format as is
+            #db.options['compress']='gzip:5'
             debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, fname=fname+".bench", database=database, fmt=fmt )
     else:
         print "Unknown command: %s" % sys.argv[1]

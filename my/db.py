@@ -1,7 +1,7 @@
 # coding=utf8
 
 # HEADER:
-#   4s 4s 4x 14s 2s = (4s)tag, (4s)fmt_type, (4x)ver_num, (4x)timestamp, (14s)=db_type{'INTERMEDIARY  ','MAIN','SEGMENTED'}, {2s} = '\r\n'
+#   4s 4s 4x 4x 14s 2s = (4s)tag, (4s)fmt_type, (4x)ver_num, (4x)timestamp, (14s)=db_type{'INTERMEDIARY','MAIN','SEGMENTED'}, {2s} = '\r\n'
 # MAIN DATABASE FORMAT:
 #   database[dname][fname] = [0ftype, 1mtime, 2fsize, 3md5{22sym-string}, 4opt]
 
@@ -19,7 +19,7 @@ UJSON   ----------               -------------          save -- 0.503 sec   load
 MSGPACK ----------               -------------          save -- 0.689 sec   load -- 0.807 sec
 """
 
-import time, codecs, os
+import time, codecs, os, gzip
 import debug
 
 
@@ -40,6 +40,7 @@ class FMTWrapper(object):
     save_formats = {}   # saveformats[dbfmt] = last_ver_of_db
 
     DB_HEADER_TAG = chr(7)+"@FI"
+    #DB_HEADER_TAG = "FI@T"
     DB_FMT_LINE = DB_HEADER_TAG+"FMT VER TIME12345678901234\r\n"
 
     #
@@ -67,6 +68,7 @@ class FMTWrapper(object):
         self.areas = {}              # db_areas[name]
         self.areas_exclude = {}      # db_areas[name]
         self.database = {}
+        self.options = FMTWrapper.options.copy()
 
     @staticmethod
     def initFormats():
@@ -74,6 +76,8 @@ class FMTWrapper(object):
             try:
                 #print issubclass(obj,_DBFMTMain), n, obj.dbtype
                 if issubclass(obj,_DBFMTMain):
+                    if obj.dbtype.startswith('__'):
+                        continue
                     tgt = FMTWrapper.formats.setdefault(obj.dbtype, {} )
                     if obj.dbver in tgt:
                         print("Collision for format '%s:%s': %s and %s" % (obj.dbtype,obj.dbver, type(tgt[obj.dbver]), type(obj)) )
@@ -99,8 +103,14 @@ class FMTWrapper(object):
             FMTWrapper.save_formats[n] = FMTWrapper.formats[n][m]
         return FMTWrapper.formats, FMTWrapper.save_formats
 
-    def getFormat( self, fmt ):
-            return self.save_formats.get(fmt,None)
+    def getFormat( self, fmt, ver = None ):
+        if fmt not in self.formats:
+            return None
+
+        if ver is None:
+            return self.save_formats[fmt]
+        else:
+            return self.formats[fmt].get(ver,None)
 
     def load( self, database = None, fname = None ):
         if self.isDebug: dbg = debug.Measure('load')
@@ -119,9 +129,9 @@ class FMTWrapper(object):
             if res[:4]!=self.DB_HEADER_TAG:
                 raise Exception("Wrong TAG: This is not a FInspector DB")
             self.fmt, self.ver, self.dbtime, self.dbtype = res[4:8], res[8:12], int(res[12:16],16), res[16:16+14].rstrip()
-            if self.fmt not in self.formats:
+            if self.getFormat( self.fmt ) is None:
                 raise Exception("Unknown DB Format: %s"%self.fmt)
-            if self.ver not in self.formats[self.fmt]:
+            if self.getFormat( self.fmt, self.ver ) is None:
                 raise Exception("Unsupported DB Ver: %s.%s"%(self.fmt,self.ver))
             lineno+=1
 
@@ -129,6 +139,7 @@ class FMTWrapper(object):
 
             # Binary safe preload buffer to find empty line
             lines = ''
+            f.seek(0)
             while lines.find('\n\n')<0:
                 l=f.read(256)
                 if not l:
@@ -144,6 +155,9 @@ class FMTWrapper(object):
             # Binary safe Load areas of responsibility
             self.areas, self.areas_exclude = {}, {}
             idx = 0
+            s = getline()
+            offset = len(s)
+            #print "offset=",offset     #@tsv
             while True:
               try:
                 s = getline()
@@ -154,29 +168,31 @@ class FMTWrapper(object):
                     self.areas[s[1:].decode('utf-8')]=1
                 elif s[0]=='-':
                     self.areas_exclude[s[1:].decode('utf-8')]=1
+                elif s[0]=='#':
+                    # comment - skip it
+                    continue
+                elif s[0]=='@':
+                    optname,optvalue = s[1:].decode('utf-8').split('=',1)
+                    self.options[ optname.strip() ] = optvalue.strip()
                 else:
-                    raise Exception( "Unknown area type at line %d: %s" % (lineno,s) )
+                    raise Exception( "Unknown header type at line %d: %s" % (lineno,s) )
               finally:
-                lineno+=1
+                 lineno+=1
 
-            offset += 1
             f.seek( offset )        # fix offset after readline()
 
             if self.isDebug: dbg.tick('headers')
 
             # Find corresponend processor and call it
-            obj = self.formats[self.fmt][self.ver]()
+            obj = self.getFormat( self.fmt, self.ver )()
             if self.isDebug: print "Do load %s from %s" %( type(obj), self.fname)
             obj.lineno = lineno
             obj.offset = offset
             obj.fname = self.fname
             obj.options.update( self.options )
-            if obj.require=='':
-                rv = obj.load( f, database )
-            else:
-                with codecs.open(self.fname,'rb',obj.require) as f1:
-                    f1.seek( f.tell() )
-                    rv = obj.load( f1, database )
+            if self.options.get('compress','').startswith('gzip:'):
+                f = gzip.GzipFile(fileobj=f)
+            rv = obj.load( f, database )
 
             # TODO!! Postprocess - clean out not matched to areas/areas_exclude
             if self.isDebug:
@@ -199,12 +215,13 @@ class FMTWrapper(object):
             database = self.database
         if fmt is not None:
             self.fmt = fmt
-        if self.fmt not in self.save_formats:
+        if self.getFormat( self.fmt ) is None:
             raise Exception("Fail to save: don't know how to write '%s' format"%self.fmt)
 
-        obj = self.save_formats[self.fmt]()
+        obj = self.getFormat( self.fmt )()
         self.ver = obj.dbver
         self.dbtime = time.time()
+        obj.options.update( self.options )
 
         fname_bak = self.fname+".bak"
         if os.path.exists(self.fname):
@@ -214,6 +231,9 @@ class FMTWrapper(object):
 
         with open( self.fname, 'wb' ) as f:
             f.write("%4s%-4s%-4s%04x%-14s\r\n" % ( FMTWrapper.DB_HEADER_TAG, self.fmt, self.save_formats[self.fmt].dbver, time.time(),dbtype[:14] ) )
+            f.write( time.strftime("#ASOF: %d.%m.%y %H:%M\n", time.localtime(self.dbtime)) )
+            for optname, optvalue in self.options.items():
+                f.write("@%s=%s\n"%(optname.encode('utf-8'), optvalue.encode('utf-8')) )  #,'backslashreplace'
             for k in self.areas.keys():
                 if isinstance(k,unicode):
                     k = k.encode('utf-8')
@@ -226,18 +246,106 @@ class FMTWrapper(object):
 
             # TODO: Preprocess! Exclude not matched to areas/exclude_areas
 
+            compress = self.options.get('compress','').split(':',1)
             if self.isDebug: print "Do save %s to %s" % ( type(obj), self.fname )
-            if obj.require == '':
-                f.flush()
-                rv = obj.save( f, database )
+            if compress[0]!='':
+                clevel = int(compress[1]) if len(compress)>1 else 5
+                if compress[0]!='gzip':
+                    raise Exception("Fail to save: don't know '%s' compress "%compress)
+                if self.isDebug: print "Compress as %s" % ( compress )
 
-        if obj.require!='':
-            with codecs.open( self.fname, 'ab', obj.require ) as f:
-                rv = obj.save( f, database )
+            f.flush()
+            if compress[0]!='':
+                f=gzip.GzipFile(fileobj=f, compresslevel=clevel)
+            rv = obj.save( f, database )
 
         if os.path.exists(fname_bak):
             os.unlink(fname_bak)
 
+
+"""
+============================================================
+            Stream classes
+============================================================
+"""
+
+class BaseStream(object):
+    def __init__( self, f ):
+        self._fh = f
+    def __getattr__( self, method, *kw,**kww):
+         return getattr( self._fh, method )
+
+class UTF8Stream(BaseStream):
+    def read( self, *kw ):
+        rv = self._fh.read(*kw)
+        if isinstance(rv,str):
+            return rv.decode('utf-8')
+        return rv
+    def write( self, s ):
+        if isinstance(s,unicode):
+            s = s.encode('utf-8')
+        return self._fh.write(s)
+
+# Just simple class which doesn't support seek/tell,...
+# based on import gzip (but that was fail because crc
+class GZIPRawStream(BaseStream):
+    import zlib, struct
+
+    def __init__( self, f, compresslevel ):
+        self._fh = f
+        self.offset = f.tell()
+        self.crc = zlib.crc32("") & 0xffffffffL
+        if f.mode[0]=='r':
+            ln = self._read32u(f)
+            crc = self._read32u(f)
+            decompress = zlib.decompressobj(-zlib.MAX_WBITS)
+            data = f.read(ln)
+            self.crc = zlib.crc32(data, self.crc) & 0xffffffffL
+            if self.crc!=crc:
+                print "Wrong CRC: expect %x but got %x" % (crc, self.crc)
+            self.content = decompress.decompress(data)
+            self.content += decompress.flush()
+            self.tell = 0
+        else:
+            self._write32u(f,0)
+            self._write32u(f,0)
+            self._len = 0
+            self.compress = zlib.compressobj(compresslevel,
+                                             zlib.DEFLATED,
+                                             -zlib.MAX_WBITS,
+                                             zlib.DEF_MEM_LEVEL,
+                                             0)
+
+    def close(self):
+        if hasattr(self,'compress'):
+            data = self.compress.flush()
+            self.len+=len(data)
+            self.crc = zlib.crc32(data, self.crc) & 0xffffffffL
+            self._fh.write(data)
+            self._fh.seek(self.offset)
+            self.write32u(f,self.len)
+            self.write32u(f,self.crc)
+
+            #import gzip
+
+    def read(self,size=None):
+        tell = self.tell
+        if size is None:
+            tell = len(self.content)
+        self.tell = self.tell+size
+        self.tell = len(self.content) if self.tell>len(self.content) else self.tell
+        return self.content[tell:self.tell]
+
+    def write(self,s):
+        data = self.compress.compress(s)
+        self.crc = zlib.crc32(data, self.crc) & 0xffffffffL
+        self._len += len(data)
+
+    def _write32u(self, f, val):
+        f.write( struct.pack('L',val) )
+
+    def _read32u(self, f, val):
+        return struct.unpack( 'L', f.read(4) )
 
 # 0ftype, (1fname), 1mtime, 2fsize, 3md5, 4opt
 
@@ -287,7 +395,6 @@ class _DBFMT_TXT(_DBFMTMain):
     # description of class
     dbtype = 'TEXT'
     dbver  = '0001'
-    require = ''                #''=os.open, otherwise = codecs.open
 
     # instance value
     #lineno = 3
@@ -297,10 +404,10 @@ class _DBFMT_TXT(_DBFMTMain):
             dirname = None
 
             ##measure = debug.Measure(self)
+            lineno = self.lineno
             res = f.read().decode('utf-8').splitlines()                     # produce unicode
             #res = f.read().encode('utf-8').splitlines()    # works faster but produce non-unicode
             ##measure.tick('read+split')
-            lineno = self.lineno
             for line in res:
                 if not line:
                     continue
@@ -358,7 +465,6 @@ class _DBFMT_ULTRAJSON(_DBFMTMain):
     # description of class
     dbtype = 'JSON'
     dbver  = '0001'
-    require = 'utf-8'    #''=os.open, otherwise = codecs.open
 
     @staticmethod
     def init():
@@ -380,22 +486,22 @@ class _DBFMT_ULTRAJSON(_DBFMTMain):
         return json
 
     def load( self, f, database):
+        f = UTF8Stream(f)
         json = self._get_lib()
         db1=json.load(f)
         return self._update_db( database, db1 )
 
     def save( self, f, database ):
+        f = UTF8Stream(f)
         json = self._get_lib()
-        json.dump(database, f)
+        json.dump(database, f,ensure_ascii=False)
         return database
-
 
 
 class _DBFMT_MSGPACK(_DBFMTMain):
     # description of class
     dbtype = 'MSGp'
     dbver  = '0001'
-    require = ''    #''=os.open, otherwise = codecs.open
 
     @staticmethod
     def init():
