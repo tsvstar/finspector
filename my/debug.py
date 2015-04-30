@@ -47,3 +47,26 @@ class Measure():
     def __exit__( self, *kw, **kww):
         tick('end')
 
+
+"""=============================================="""
+_debugGuard = False
+def debugDump( obj, short = False ):
+    global _debugGuard
+    if _debugGuard:
+         return
+    _debugGuard = True
+    rv = "Object %s (%d)" % ( obj.__class__, id(obj) )
+    for attr in dir(obj):
+        if short and attr.startswith('__') and attr.endswith('__'):
+                continue
+        rv += "\nobj.%s = %s" % (attr, getattr(obj,attr))
+    _debugGuard = False
+    return rv
+
+def TODO( mark, fatal=False ):
+    import inspect
+    frame = inspect.stack()[1]
+    say( "%s at %s:%s", (mark, frame[1], frame[2]) )
+    if fatal:
+        exit(1)
+
