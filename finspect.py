@@ -2,8 +2,6 @@
 
 import sys, os, time, codecs
 
-#TODO: gzip doesn't work, although provide compresion 2-3 times for JSON
-
 
 database = {}       #   [directory] ["dir"|"file"] [name]  = [0mtime, 1md5, 2size]
                     #   [directory] [name] = [0type, 1mtime, 2size, 3md5, 4hexstr_tstamp_snapshot?? ]       # type = File, Dir, Link
@@ -170,19 +168,19 @@ def main():
     import my.db as mydb, my.debug as debug
 
     try:
+        # a) Fastest way - is UltraJSON compiled-extension
+        import ujson
+        # If UltraJSON exists - that is fastest way to load/save DB
+        mydb.FMTWrapper.default_fmt = 'JSON'
+    except Exception as e:
         db = mydb.FMTWrapper()
-        # a) Fastest way - is "msgpack" as a compiled-extension
+        # b) A little bit worse is "msgpack" as a compiled-extension
         if db.getFormat('MSGp') and db.getFormat('MSGp').options.get('msgpack.ext',False):
             mydb.FMTWrapper.default_fmt = 'MSGp'
         else:
-        # b) A little bit worse is UltraJSON compiled-extension
-            import ujson
-            # If UltraJSON exists - that is fastest way to load/save DB
-            mydb.FMTWrapper.default_fmt = 'JSON'
-    except Exception as e:
-        # c) If no fast complied modules exists (PyPy) - use own text saver
-        # It is faster other common solution - pickle/cPickle/json
-        mydb.FMTWrapper.default_fmt = 'TEXT'
+            # c) If no fast complied modules exists (PyPy) - use own text saver
+            # It is faster other common solution - pickle/cPickle/json
+            mydb.FMTWrapper.default_fmt = 'TEXT'
     print mydb.FMTWrapper.default_fmt
 
     if len(sys.argv)<2:
@@ -190,7 +188,7 @@ def main():
         exit(1)
 
     letter_list = [ 'C', 'E','G', 'H', 'K' ]
-    letter_list = [ 'C']
+    #letter_list = [ 'C']
 
     #mydb.FMTWrapper.default_fmt = 'TEXT'
     db = mydb.FMTWrapper('./!my_main.db')
@@ -283,10 +281,9 @@ def main():
     elif sys.argv[1]=='bench':
         # benchmark
         for letter in letter_list:
-            print letter
             fname = './!my_%s.db'%letter
             db = mydb.FMTWrapper(fname)
-            database = debug.Measure.measure_call_silent('',  db.load )
+            database = debug.Measure.measure_call_silent('%s: '%letter,  db.load )
             cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
 
             fmt = None  # keep format as is

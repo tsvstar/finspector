@@ -5,7 +5,7 @@ change format a little:
 	        if len(dbtype)<14 make last char '|' (auto cut it on load) - to avoid removal it
 		find first '\n' - if eol was changed
 
-	B) EXTEND FUNCTIONS OF EXTRA LINES
+	+B) EXTEND FUNCTIONS OF EXTRA LINES
 		extra lines could contain:
 		#comment
 		#option OPTIONNAME=value
@@ -21,6 +21,8 @@ TODO:
 
 	MAKE PLUGIN SYSTEM: do import, give that block to loader and say what should be base class
 		reason --> we have several formats, we have probably several kind of compress
+
+	CHECK: https://pypi.python.org/pypi/msgpack-pypy
 
 	+MAKE BACKUP BEFORE SAVE
 	+SAVE md5 INFO and give report ON KeyboardInterrupt
@@ -147,6 +149,12 @@ finspector.py [--options..] command
    scan, md5	- until finished is writed to intermediary
    database list - 
    database save -
+
+ if given name is the file, then it describe request in following format(each line separately)
++dir_to_include
+-dir_to_exclude
+!dir_to_keep in order of priority(all unlisted have lowest priority)
+
 
 
 === CONFIG ===

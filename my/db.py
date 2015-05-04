@@ -542,7 +542,8 @@ class _DBFMT_MSGPACK(_DBFMTMain):
         try:
             from msgpack import _unpacker, _packer
             module = True      # means "use c-extension"
-        except ImportError:
+        except ImportError as e:
+            #print e
             try:
                 import msgpack
                 module  = False     # means "use pure python"
@@ -566,11 +567,99 @@ class _DBFMT_MSGPACK(_DBFMTMain):
 
 """============"""
 class SEGMENTED_CLASS(object):
-    segments = [ ]      # list of databases
+    segments = {}      # list of databases
 
     # def __iter__ - iter through all databases
     # setter
     # getter
+    def __init__( self ):
+        self.segments = {}
+        self._insensitive = lambda s:  s.replace('/','\\').rstrip('\\').upper()+'\\'
+        #self._insensitive = lambda s: s
+
+    def load( self, fname ):
+        self.fname = fname
+        with open(fname,'rb') as f:
+            lines = f.read().splitlines()
+            last = None
+            lineno = 0
+            for l in lines:
+                lineno += 1
+                if lineno==1:
+                    if not l.strip().startswith("#FILE_INSPECTOR_SEGMENTED_DB"):
+                        raise Exception( "Not segmented format - tag is %s" % l )
+
+                dbname, path = (l.strip().split('#',1)[0].split('\t',2) + [None] )[:2]   # cutoff comment, split to
+                if dbname.strip():
+                    last = dbname[1:]
+                    sign = dbname[:1]
+                    if sign not in ['-','+']:
+                        print "Unknown sign '%s' at line %d" % (sign,lineno)
+                        last = None
+                        continue
+                if path is None:
+                    continue
+                if not last:
+                    print "Not defined database at line %d" % lineno
+                    continue
+                paths = filter( len, map( str.strip, path.split('|') ) )
+                for p in paths:
+                    self.segments.setdefault(last,{}).setdefault(sign,set()).add( self._insensitive(p) )
+
+            for dbname,v in self.segments.values():
+                if '+' not in v:
+                    print "There is no INCLUDE values for %s database defined" % dbname
+                    del self.segments[dbname]
+                v.setdefault('-',set())
+
+            for dbname,v in self.segments.values():
+                for dbname1,v1 in self.segments.values():
+                    if dbname!=dbname1:
+
+                        # check for direct collision
+                        for p in v['+']:
+                            if p in v1['+']:
+                                print "Same value '%s' is defined both for '%s' and '%s'" % (p,dbname,dbname1)
+                                exit()
+
+                        # exclude other dir
+                        for p in v['+']:
+                            v1['-'].add(p)
+
+            # compress:
+            for dbname,v in self.segments.values():
+                #   a) remove include values which are subdir of another records
+                for p_include in v['+']:
+                    for p_include2 in v['+']:
+                        if p_include!=p_include2 and p_include.startswith(p_include2):
+                            v['+'].remove(p_include)
+
+                #   b) delete exclude items which are not started as
+                for p_exclude in v['-']:
+                    match = filter( lambda p_include: p_exclude.startswith(p_include), v['+'] )
+                    if not match:
+                        v['-'].remove(p_exclude)
+
+
+    def match( self, dname ):
+        dname = self._insensitive( dname )
+        for dbname,v in self.segments.values():
+            for p in v['+']:
+                if path.startswith(p):
+                    break
+            else:
+                continue
+
+            for p in v['-']:
+                if path.startswith(p):
+                    break
+            else:
+                return p
+        return None
+
+
+
+
 
 
 """ AUXILARY FUNC"""
