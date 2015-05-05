@@ -64,7 +64,8 @@ def scan_file( dirname, database, intermediary_saver = None, verbose = False ):
     if intermediary_saver:
         intermediary_saver.handle(database)
     if verbose:
-        sys.stdout.write( fname_justify(dirname.encode('cp866','ignore')) + chr(13) )
+        sys.stdout.write( fname_justify( dirname.decode('cp1251') if isinstance(dirname,str) else dirname ).encode('cp866','ignore') + chr(13) )
+        #sys.stdout.write( fname_justify(dirname.encode('cp866','ignore')) + chr(13) )
         sys.stdout.flush()
 
     for i in ignore_dirs_anyplace:
@@ -181,17 +182,14 @@ def main():
             # c) If no fast complied modules exists (PyPy) - use own text saver
             # It is faster other common solution - pickle/cPickle/json
             mydb.FMTWrapper.default_fmt = 'TEXT'
-    print mydb.FMTWrapper.default_fmt
+    print "Default Format: ", mydb.FMTWrapper.default_fmt
 
     if len(sys.argv)<2:
         print "No command given: update, find"
         exit(1)
 
-    letter_list = [ 'C', 'E','G', 'H', 'K' ]
-    #letter_list = [ 'C']
+    maindb = mydb.SegmentedDB('./main_db.db')
 
-    #mydb.FMTWrapper.default_fmt = 'TEXT'
-    db = mydb.FMTWrapper('./!my_main.db')
     if sys.argv[1] in ['update','scan']:
         # COMMAND: rescan
         intermediary_saver = Saver('./!!my.~int~.db', period=-60)
@@ -203,10 +201,12 @@ def main():
         db.save( database )
 	    """
 
-        for letter in letter_list:
-            db2 = mydb.FMTWrapper('./!my_%s.db'%letter)
-            print "\nScan filesystem %s" %letter
-            database= scan_file( u"%s:\\"%letter, {}, intermediary_saver, verbose = True)
+        for dbname,v in maindb.segments.items():
+            db2 = mydb.FMTWrapper(dbname)
+            database = {}
+            for letter in v['+']:
+                print "\nScan filesystem %s" %letter
+                scan_file( letter, database, intermediary_saver, verbose = True)
             print "\nSave"
             db2.save( database )
 
@@ -218,9 +218,9 @@ def main():
 
         database={}
         measure = debug.Measure()
-        for letter in letter_list:
-           print "Load %s:\\" %letter
-           db = mydb.FMTWrapper('./!my_%s.db'%letter)
+        for dbname,v in maindb.segments.items():
+           print "Load %s" %dbname
+           db = mydb.FMTWrapper(dbname)
            db.load( database )
            cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
         measure.tick('%d records loaded'%cnt)
@@ -246,7 +246,11 @@ def main():
 
         for letter in letter_list:
             print "Start processing %s" % letter
-            db = mydb.FMTWrapper('./!my_%s.db'%letter)
+            dbname = maindb.match('%s:'%letter)
+            if dbname is None:
+                print "No match to %s: found" % letter.upper()
+                continue
+            db = mydb.FMTWrapper(dbname)
             database = db.load()
             t0 = t1 = time.time()
             processed = processed_cycle = 0
@@ -280,15 +284,14 @@ def main():
 
     elif sys.argv[1]=='bench':
         # benchmark
-        for letter in letter_list:
-            fname = './!my_%s.db'%letter
-            db = mydb.FMTWrapper(fname)
+        for dbname,v in maindb.segments.items():
+            db = mydb.FMTWrapper(dbname)
             database = debug.Measure.measure_call_silent('%s: '%letter,  db.load )
             cnt = reduce(lambda acc,x: acc+len(x), database.values(), 0)
 
             fmt = None  # keep format as is
             db.options['compress']='gzipraw:5'
-            debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, fname=fname+".bench", database=database, fmt=fmt )
+            debug.Measure.measure_call_silent('%d records loaded\n'%cnt,  db.save, fname=dbname+".bench", database=database, fmt=fmt )
     else:
         print "Unknown command: %s" % sys.argv[1]
 

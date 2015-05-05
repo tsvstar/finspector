@@ -19,7 +19,7 @@ UJSON   ----------               -------------          save -- 0.503 sec   load
 MSGPACK ----------               -------------          save -- 0.689 sec   load -- 0.807 sec
 """
 
-import time, codecs, os, gzip
+import time, codecs, os, gzip, hashlib
 import debug
 
 
@@ -566,16 +566,22 @@ class _DBFMT_MSGPACK(_DBFMTMain):
 
 
 """============"""
-class SEGMENTED_CLASS(object):
-    segments = {}      # list of databases
+class SegmentedDB(object):
+    segments = {}       # list of databases
 
     # def __iter__ - iter through all databases
     # setter
     # getter
-    def __init__( self ):
-        self.segments = {}
+    def __init__( self, fname = None ):
         self._insensitive = lambda s:  s.replace('/','\\').rstrip('\\').upper()+'\\'
         #self._insensitive = lambda s: s
+
+        self.segments = {}      # segments[dbname] = { '+':[include_dir], '-':[exclude_dir], 'db': FMTWrapper(if loaded),
+                                #                         'md5_main': md5_of_db(name+size+mtime) to detect save, 'md5_md5': md5 of md5 )
+        self.database = {}
+
+        if fname is not None:
+            self.load( fname )
 
     def load( self, fname ):
         self.fname = fname
@@ -589,14 +595,20 @@ class SEGMENTED_CLASS(object):
                     if not l.strip().startswith("#FILE_INSPECTOR_SEGMENTED_DB"):
                         raise Exception( "Not segmented format - tag is %s" % l )
 
-                dbname, path = (l.strip().split('#',1)[0].split('\t',2) + [None] )[:2]   # cutoff comment, split to
+                # skip comments
+                if l.lstrip().startswith('#'):
+                    continue
+
+                # split the line
+                dbname, path = (l.strip().split('\t',1) + [None] )[:2]   # cutoff comment, split to
                 if dbname.strip():
-                    last = dbname[1:]
                     sign = dbname[:1]
                     if sign not in ['-','+']:
                         print "Unknown sign '%s' at line %d" % (sign,lineno)
                         last = None
                         continue
+                    if dbname[1:].strip():
+                        last = dbname[1:]
                 if path is None:
                     continue
                 if not last:
@@ -606,14 +618,15 @@ class SEGMENTED_CLASS(object):
                 for p in paths:
                     self.segments.setdefault(last,{}).setdefault(sign,set()).add( self._insensitive(p) )
 
-            for dbname,v in self.segments.values():
+            print self.segments
+            for dbname,v in self.segments.items():
                 if '+' not in v:
-                    print "There is no INCLUDE values for %s database defined" % dbname
+                    print "There is no INCLUDE values for database '%s' defined" % dbname
                     del self.segments[dbname]
                 v.setdefault('-',set())
 
-            for dbname,v in self.segments.values():
-                for dbname1,v1 in self.segments.values():
+            for dbname,v in self.segments.items():
+                for dbname1,v1 in self.segments.items():
                     if dbname!=dbname1:
 
                         # check for direct collision
@@ -627,38 +640,56 @@ class SEGMENTED_CLASS(object):
                             v1['-'].add(p)
 
             # compress:
-            for dbname,v in self.segments.values():
+            for dbname,v in self.segments.items():
                 #   a) remove include values which are subdir of another records
-                for p_include in v['+']:
-                    for p_include2 in v['+']:
+                for p_include in list(v['+']):
+                    for p_include2 in list(v['+']):
                         if p_include!=p_include2 and p_include.startswith(p_include2):
                             v['+'].remove(p_include)
 
                 #   b) delete exclude items which are not started as
-                for p_exclude in v['-']:
+                for p_exclude in list(v['-']):
                     match = filter( lambda p_include: p_exclude.startswith(p_include), v['+'] )
                     if not match:
                         v['-'].remove(p_exclude)
 
+            # transform to sorted list
+            for dbname, v in self.segments.items():
+                v['+']  = sorted(v['+'])
+                v['-']  = sorted(v['-'])
+                v['db'] = None
+                v['md5_main'] = hashlib.md5()
+                v['md5_md5']  = hashlib.md5()
 
+
+    # detect to which database match
     def match( self, dname ):
         dname = self._insensitive( dname )
-        for dbname,v in self.segments.values():
+        for dbname,v in self.segments.iteritems():
             for p in v['+']:
-                if path.startswith(p):
+                if dname.startswith(p):
                     break
             else:
                 continue
 
             for p in v['-']:
-                if path.startswith(p):
+                if dname.startswith(p):
                     break
             else:
-                return p
+                return dbname
         return None
 
+    # load segments for given list of dir
+    def load_segments( self, lst ):
+        pass
 
+    # save all loaded segments
+    def save_segments( self ):
+        pass
 
+    # auxilary func
+    def _calc_md5( self, dname, recursive = True ):
+        pass
 
 
 

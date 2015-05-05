@@ -1,0 +1,14 @@
+#FILE_INSPECTOR_SEGMENTED_DB	# do not touch this line and keep it first
+
++db\disk_c.db	C:|D:\
+-		C:\Windows|E:\Test
++db\disk.db	C:\MY\
+
+# FORMAT IS:
+#   [+-]relative_path_to_db TABULATION dir1|dir2|dir3|...	- means include(+) or exclude(-) directories from given DB
+#   comments are allowed (the line should starts from #)
+#
+# Example:
+#   +db\disk1.db	C:|D:
+#   -			C:\Windows
+#   +db\disk2.db	E:\

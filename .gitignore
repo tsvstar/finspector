@@ -1,7 +1,7 @@
 #!!! MY FILES !!!!
 *.bak
 *.cache
-*.db
+#*.db
 
 
 # Byte-compiled / optimized / DLL files
